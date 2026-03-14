@@ -1,0 +1,8 @@
+services:
+  app:
+    container_name: rust-ds
+    image: rust:slim
+    restart: unless-stopped
+    volumes:
+      - .:/app
+    working_dir: /app

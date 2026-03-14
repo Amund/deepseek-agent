@@ -1,0 +1,1139 @@
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use tokio::process::Command;
+use tokio::time::{sleep, timeout, Duration};
+use std::env;
+
+// Constantes pour la gestion des erreurs et retries
+const DEFAULT_MAX_RETRIES: u32 = 3;
+const DEFAULT_RETRY_DELAY_MS: u64 = 1000;
+const DEFAULT_MAX_RETRY_DELAY_MS: u64 = 30000;
+
+// ------------------ Structures pour l'API DeepSeek ------------------
+
+// Fonction pour estimer le nombre de tokens dans un texte
+// Estimation basée sur la longueur (approximation)
+// En pratique, utiliser les retours de l'API pour plus de précision
+fn estimate_tokens(text: &str) -> u32 {
+    if text.is_empty() {
+        return 0;
+    }
+    
+    // Estimation conservatrice :
+    // - Pour l'anglais : ~1 token pour 4 caractères
+    // - Pour d'autres langues (français, etc.) : ~1 token pour 3 caractères
+    // - Pour le code/commandes shell : variable
+    // On prend 1 token pour 3 caractères pour être prudent
+    
+    let char_count = text.chars().count() as u32;
+    
+    // Token minimum pour un texte non vide
+    std::cmp::max(1, char_count / 3)
+}
+
+fn estimate_message_tokens(message: &Message) -> u32 {
+    let mut total = estimate_tokens(&message.content);
+    
+    // Ajouter les tokens pour les tool_calls si présents
+    if let Some(tool_calls) = &message.tool_calls {
+        for tool_call in tool_calls {
+            // Estimer les tokens pour l'ID, le type, et les arguments
+            total += estimate_tokens(&tool_call.id);
+            total += estimate_tokens(&tool_call.call_type);
+            total += estimate_tokens(&tool_call.function.name);
+            total += estimate_tokens(&tool_call.function.arguments);
+        }
+    }
+    
+    // Ajouter les tokens pour tool_call_id si présent
+    if let Some(tool_call_id) = &message.tool_call_id {
+        total += estimate_tokens(tool_call_id);
+    }
+    
+    // Ajouter les tokens pour le rôle
+    total += estimate_tokens(&message.role);
+    
+    total
+}
+
+// Fonction pour déterminer la limite de tokens par défaut selon le modèle
+fn default_max_context_tokens_for_model(model: &Option<String>) -> u32 {
+    let model_name = model.as_deref().unwrap_or("deepseek-chat");
+    
+    // Basé sur la documentation DeepSeek :
+    // - deepseek-chat: 128K tokens input, jusqu'à 8K tokens output
+    // - deepseek-reasoner: 128K tokens input, jusqu'à 64K tokens (32K max de reasoning) output
+    // Pour les autres modèles, on suppose une limite conservatrice de 32K
+    
+    match model_name {
+        "deepseek-chat" => {
+            // 128K input - réserve pour la sortie (8K) et les tokens système
+            const RESERVED_FOR_OUTPUT: u32 = 12_000; // 8K sortie max + 4K marge
+            const SYSTEM_TOKENS: u32 = 4_000; // tokens système, outils, etc.
+            128_000 - RESERVED_FOR_OUTPUT - SYSTEM_TOKENS // 112K tokens
+        }
+        "deepseek-reasoner" => {
+            // 128K input - réserve pour la sortie (64K max, mais raisonnement 32K)
+            // On réserve plus pour permettre des réponses longues
+            const RESERVED_FOR_OUTPUT: u32 = 20_000; // raisonnement long possible
+            const SYSTEM_TOKENS: u32 = 4_000;
+            128_000 - RESERVED_FOR_OUTPUT - SYSTEM_TOKENS // 104K tokens
+        }
+        _ => {
+            // Modèles plus anciens ou inconnus - limite conservatrice
+            // On suppose 32K tokens maximum avec marge
+            const RESERVED_FOR_OUTPUT: u32 = 4_000;
+            32_000 - RESERVED_FOR_OUTPUT // 28K tokens (compatible avec l'ancienne valeur)
+        }
+    }
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct Message {
+    role: String,      // "system", "user", "assistant", "tool"
+    content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<ToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>,
+    #[serde(skip)]
+    token_count: Option<u32>, // Estimation ou comptage réel
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct ToolCall {
+    id: String,
+    #[serde(rename = "type")]
+    call_type: String, // "function"
+    function: FunctionCall,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct FunctionCall {
+    name: String,
+    arguments: String, // string JSON
+}
+
+#[derive(Debug, Serialize)]
+struct ChatRequest {
+    model: String,
+    messages: Vec<Message>,
+    tools: Vec<Tool>,
+    tool_choice: String,
+}
+
+#[derive(Debug, Serialize)]
+struct Tool {
+    #[serde(rename = "type")]
+    tool_type: String,
+    function: ToolFunction,
+}
+
+#[derive(Debug, Serialize)]
+struct ToolFunction {
+    name: String,
+    description: String,
+    parameters: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct Usage {
+    prompt_tokens: u32,
+    completion_tokens: u32,
+    total_tokens: u32,
+    prompt_cache_hit_tokens: Option<u32>,
+    prompt_cache_miss_tokens: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatResponse {
+    choices: Vec<Choice>,
+    usage: Usage,
+}
+
+#[derive(Debug, Deserialize)]
+struct Choice {
+    message: Message,
+}
+
+// ------------------ Agent ------------------
+struct Agent {
+    client: Client,
+    api_key: String,
+    model: String,
+    system_prompt: Option<String>,
+    messages: Vec<Message>, // <-- historique en mémoire
+    total_tokens: u32, // Total des tokens estimés dans l'historique
+    whitelist: Option<Vec<String>>, // optionnel, pour restreindre les commandes
+    blacklist: Option<Vec<String>>, // optionnel, pour interdire des commandes
+    max_history_messages: Option<usize>, // limite de messages (optionnel)
+    max_context_tokens: Option<u32>, // limite de tokens (optionnel, prioritaire)
+    debug: bool, // mode debug
+    max_retries: u32,
+    retry_delay_ms: u64,
+    max_retry_delay_ms: u64,
+    shell_timeout_ms: Option<u64>,
+    token_calibration_factor: f32, // facteur pour ajuster les estimations
+    total_real_tokens_observed: u32, // total des tokens réels observés (pour stats)
+    total_estimated_tokens: u32, // total des tokens estimés correspondants
+}
+
+impl Agent {
+    fn new(
+        api_key: String,
+        model: Option<String>,
+        system_prompt: Option<String>,
+        whitelist: Option<Vec<String>>,
+        blacklist: Option<Vec<String>>,
+        max_history_messages: Option<usize>,
+        max_context_tokens: Option<u32>,
+        debug: bool,
+        max_retries: Option<u32>,
+        retry_delay_ms: Option<u64>,
+        max_retry_delay_ms: Option<u64>,
+        shell_timeout_ms: Option<u64>,
+    ) -> Self {
+        Agent {
+            client: Client::new(),
+            api_key,
+            model: model.unwrap_or_else(|| "deepseek-chat".to_string()),
+            system_prompt,
+            messages: Vec::new(),
+            total_tokens: 0,
+            whitelist,
+            blacklist,
+            max_history_messages,
+            max_context_tokens,
+            debug,
+            max_retries: max_retries.unwrap_or(DEFAULT_MAX_RETRIES),
+            retry_delay_ms: retry_delay_ms.unwrap_or(DEFAULT_RETRY_DELAY_MS),
+            max_retry_delay_ms: max_retry_delay_ms.unwrap_or(DEFAULT_MAX_RETRY_DELAY_MS),
+            shell_timeout_ms,
+            token_calibration_factor: 1.0,
+            total_real_tokens_observed: 0,
+            total_estimated_tokens: 0,
+        }
+    }
+
+    async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // Message système (personnalisable)
+        let system_content = self.system_prompt.clone().unwrap_or_else(|| 
+            "Tu es un assistant qui peut exécuter des commandes shell. Pour cela, utilise l'outil 'sh' avec le paramètre 'command'.".to_string()
+        );
+        
+        self.add_message(Message {
+            role: "system".into(),
+            content: system_content,
+            tool_calls: None,
+            tool_call_id: None,
+            token_count: None,
+        });
+
+        println!("Agent DeepSeek minimal (Docker). Tapez 'quit' pour sortir.");
+        let mut stdin = rustyline::DefaultEditor::new()?;
+
+        loop {
+            let user_input = stdin.readline(">> ")?;
+            if user_input == "quit" {
+                break;
+            }
+
+            // Ajout du message utilisateur à l'historique
+            self.add_message(Message {
+                role: "user".into(),
+                content: user_input,
+                tool_calls: None,
+                tool_call_id: None,
+                token_count: None,
+            });
+
+            // Appel API
+            let response = self.call_deepseek().await?;
+
+            if let Some(choice) = response.choices.into_iter().next() {
+                let msg = choice.message;
+                self.add_message(msg.clone());
+
+                // Si l'assistant demande un outil
+                if let Some(tool_calls) = msg.tool_calls {
+                    let mut tool_results = Vec::new();
+                    
+                    for tool_call in tool_calls {
+                        if tool_call.function.name == "sh" {
+                            // Extraire la commande des arguments JSON
+                            let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)?;
+                            let command = args["command"].as_str().unwrap_or("").to_string();
+
+                            // Vérification de sécurité
+                            if let Err(error_msg) = self.validate_command(&command) {
+                                tool_results.push(Message {
+                                    role: "tool".into(),
+                                    content: error_msg,
+                                    tool_calls: None,
+                                    tool_call_id: Some(tool_call.id.clone()),
+                                    token_count: None,
+                                });
+                                continue;
+                            }
+
+                            println!("[Shell] Exécution : {}", command);
+                            let output = self.exec_shell(&command).await;
+
+                            // Ajouter le résultat à la liste
+                            tool_results.push(Message {
+                                role: "tool".into(),
+                                content: output,
+                                tool_calls: None,
+                                tool_call_id: Some(tool_call.id.clone()),
+                                token_count: None,
+                            });
+                        }
+                    }
+                    
+                    // Ajouter tous les résultats à l'historique
+                    // Ajouter tous les résultats à l'historique
+                    for result in &tool_results {
+                        self.add_message(result.clone());
+                    }
+                    
+                    // Si au moins un résultat a été généré, faire un appel API final
+                    if !tool_results.is_empty() {
+                        let final_response = self.call_deepseek().await?;
+                        if let Some(final_choice) = final_response.choices.into_iter().next() {
+                            let final_msg = final_choice.message;
+                            println!("Agent: {}", final_msg.content);
+                            self.add_message(final_msg);
+                        }
+                    }
+                } else {
+                    // Réponse textuelle normale
+                    println!("Agent: {}", msg.content);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn call_deepseek(&mut self) -> Result<ChatResponse, Box<dyn std::error::Error>> {
+        let request = ChatRequest {
+            model: self.model.clone(),
+            messages: self.messages.clone(),
+            tools: vec![Tool {
+                tool_type: "function".into(),
+                function: ToolFunction {
+                    name: "sh".into(),
+                    description: "Exécute une commande shell bash".into(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "command": {
+                                "type": "string",
+                                "description": "Commande shell à exécuter"
+                            }
+                        },
+                        "required": ["command"]
+                    }),
+                },
+            }],
+            tool_choice: "auto".into(),
+        };
+
+        let mut last_error: Option<Box<dyn std::error::Error>> = None;
+        
+        for attempt in 0..=self.max_retries {
+            match self.client
+                .post("https://api.deepseek.com/v1/chat/completions")
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .json(&request)
+                .send()
+                .await
+            {
+                Ok(resp) => {
+                    // Vérifier le statut HTTP
+                    if resp.status().is_success() {
+                        match resp.json::<ChatResponse>().await {
+                            Ok(response) => {
+                                // Calibration des tokens basée sur la réponse API
+                                self.calibrate_with_response(&request, &response);
+                                return Ok(response);
+                            }
+                            Err(e) => {
+                                last_error = Some(e.into());
+                                if self.debug {
+                                    println!("[Debug] JSON parsing error on attempt {}: {}", attempt, last_error.as_ref().unwrap());
+                                }
+                            }
+                        }
+                    } else {
+                        // Erreur HTTP (429, 500, etc.)
+                        let status = resp.status();
+                        let text = resp.text().await.unwrap_or_default();
+                        last_error = Some(format!("HTTP {}: {}", status, text).into());
+                        if self.debug {
+                            println!("[Debug] HTTP error on attempt {}: {}", attempt, last_error.as_ref().unwrap());
+                        }
+                        
+                        // Si c'est une erreur client (4xx) sauf 429 (rate limit), on ne retry pas
+                        if status.is_client_error() && status != 429 {
+                            break;
+                        }
+                        // Pour les autres erreurs (429, 5xx), on retry
+                    }
+                }
+                Err(e) => {
+                    last_error = Some(e.into());
+                    if self.debug {
+                        println!("[Debug] Network error on attempt {}: {}", attempt, last_error.as_ref().unwrap());
+                    }
+                }
+            }
+            
+            // Si ce n'est pas la dernière tentative, attendre avant de retry
+            if attempt < self.max_retries {
+                // Backoff exponentiel avec délai maximum
+                let delay_ms = std::cmp::min(
+                    self.retry_delay_ms * 2u64.pow(attempt),
+                    self.max_retry_delay_ms
+                );
+                if self.debug {
+                    println!("[Debug] Retrying in {} ms...", delay_ms);
+                }
+                sleep(Duration::from_millis(delay_ms)).await;
+            }
+        }
+        
+        // Si on arrive ici, toutes les tentatives ont échoué
+        Err(last_error.unwrap_or_else(|| "Unknown error".into()))
+    }
+    
+    // Calibre les estimations de tokens basées sur la réponse réelle de l'API
+    fn calibrate_with_response(&mut self, request: &ChatRequest, response: &ChatResponse) {
+        let real_prompt_tokens = response.usage.prompt_tokens;
+        
+        // Calculer les tokens bruts des messages (sans calibration)
+        let raw_message_tokens: u32 = self.messages.iter()
+            .map(|msg| {
+                // Si le message a déjà un token_count, c'est déjà calibré
+                // On doit recalculer les tokens bruts
+                // Pour simplifier, on utilise estimate_message_tokens qui donne une estimation brute
+                estimate_message_tokens(msg)
+            })
+            .sum();
+        
+        // Estimer les tokens des définitions d'outils (bruts)
+        let tools_json = serde_json::to_string(&request.tools).unwrap_or_default();
+        let raw_tools_tokens = estimate_tokens(&tools_json);
+        
+        // Tokens supplémentaires (metadata)
+        const EXTRA_TOKENS: u32 = 50;
+        
+        let total_raw_estimated = raw_message_tokens + raw_tools_tokens + EXTRA_TOKENS;
+        
+        // Mettre à jour les statistiques
+        self.total_real_tokens_observed += real_prompt_tokens;
+        self.total_estimated_tokens += total_raw_estimated;
+        
+        // Afficher les statistiques de cache si disponibles
+        if self.debug {
+            if let Some(cache_hit) = response.usage.prompt_cache_hit_tokens {
+                if let Some(cache_miss) = response.usage.prompt_cache_miss_tokens {
+                    let cache_hit_ratio = if real_prompt_tokens > 0 {
+                        cache_hit as f32 / real_prompt_tokens as f32
+                    } else { 0.0 };
+                    println!(
+                        "[Debug] Cache stats: hit={} ({}%), miss={}, total={}",
+                        cache_hit,
+                        (cache_hit_ratio * 100.0).round(),
+                        cache_miss,
+                        real_prompt_tokens
+                    );
+                }
+            }
+        }
+        
+        // Calculer l'erreur relative
+        if real_prompt_tokens > 0 && total_raw_estimated > 0 {
+            let error = real_prompt_tokens as f32 / total_raw_estimated as f32;
+            
+            // Ajuster le facteur de calibration si l'erreur est significative
+            // On utilise une moyenne mobile exponentielle avec facteur 0.1
+            const SMOOTHING_FACTOR: f32 = 0.1;
+            const SIGNIFICANT_ERROR: f32 = 0.1; // 10%
+            
+            if (error - 1.0).abs() > SIGNIFICANT_ERROR {
+                self.token_calibration_factor = 
+                    self.token_calibration_factor * (1.0 - SMOOTHING_FACTOR) + error * SMOOTHING_FACTOR;
+                
+                // Limiter le facteur à une plage raisonnable (0.5 à 2.0)
+                self.token_calibration_factor = self.token_calibration_factor.clamp(0.5, 2.0);
+                
+                if self.debug {
+                    println!(
+                        "[Debug] Token calibration: real={}, raw_est={}, error={:.2}%, new_factor={:.3}",
+                        real_prompt_tokens,
+                        total_raw_estimated,
+                        (error - 1.0) * 100.0,
+                        self.token_calibration_factor
+                    );
+                }
+            } else if self.debug {
+                println!(
+                    "[Debug] Token estimation accurate: real={}, raw_est={}, error={:.2}%",
+                    real_prompt_tokens,
+                    total_raw_estimated,
+                    (error - 1.0) * 100.0
+                );
+            }
+        }
+    }
+
+    async fn exec_shell(&self, command: &str) -> String {
+        // Exécution avec timeout optionnel
+        let cmd_future = Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .output();
+
+        let output = if let Some(timeout_ms) = self.shell_timeout_ms {
+            match timeout(
+                Duration::from_millis(timeout_ms),
+                cmd_future
+            ).await {
+                Ok(result) => result,
+                Err(_) => {
+                    return format!("Timeout: la commande a dépassé le temps imparti ({} ms)", timeout_ms);
+                }
+            }
+        } else {
+            cmd_future.await
+        };
+
+        match output {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                if !stderr.is_empty() {
+                    format!("STDERR:\n{}\nSTDOUT:\n{}", stderr, stdout)
+                } else {
+                    stdout
+                }
+            }
+            Err(e) => format!("Erreur d'exécution : {}", e),
+        }
+    }
+
+    // Valide une commande shell par rapport aux listes blanche/noire et règles de sécurité
+    fn validate_command(&self, command: &str) -> Result<(), String> {
+        let cmd_name = command.split_whitespace().next().unwrap_or("");
+        
+        // Vérification liste noire (prioritaire) - sur tous les tokens
+        if let Some(blacklist) = &self.blacklist {
+            // Vérifier le premier mot
+            if blacklist.contains(&cmd_name.to_string()) {
+                return Err(format!("Commande '{}' interdite (liste noire)", cmd_name));
+            }
+            // Vérifier tous les tokens pour plus de sécurité
+            for token in command.split_whitespace() {
+                // Ignorer les tokens qui sont des options (commencent par -)
+                if !token.starts_with('-') && blacklist.contains(&token.to_string()) {
+                    return Err(format!("Token '{}' interdit dans la commande (liste noire)", token));
+                }
+            }
+        }
+        
+        // Vérification liste blanche (seulement sur le premier mot)
+        if let Some(whitelist) = &self.whitelist {
+            if !whitelist.contains(&cmd_name.to_string()) {
+                return Err(format!("Commande '{}' non autorisée (liste blanche)", cmd_name));
+            }
+        }
+        
+        // Validation de sécurité basique
+        let lower_command = command.to_lowercase();
+        let dangerous_patterns = [
+            "; rm ", "; sudo ", "; shutdown ", "; reboot ", "; dd ", 
+            "; mkfs ", "; fdisk ", "> /dev/", "| bash", "| sh", "||", "&&",
+        ];
+        
+        for pattern in dangerous_patterns.iter() {
+            if lower_command.contains(pattern) {
+                return Err(format!("Commande contient un pattern dangereux: '{}'", pattern.trim()));
+            }
+        }
+        
+        // TODO: Validation plus avancée des séparateurs de commandes
+        // avec prise en compte des guillemets et des échappements
+        
+        Ok(())
+    }
+    
+    // Met à jour l'estimation de tokens pour un message
+    fn estimate_and_set_tokens(&mut self, message: &mut Message) -> u32 {
+        if message.token_count.is_none() {
+            let raw_tokens = estimate_message_tokens(message);
+            // Appliquer le facteur de calibration
+            let calibrated_tokens = std::cmp::max(
+                1,
+                (raw_tokens as f32 * self.token_calibration_factor).round() as u32
+            );
+            message.token_count = Some(calibrated_tokens);
+            calibrated_tokens
+        } else {
+            message.token_count.unwrap_or(0)
+        }
+    }
+    
+    // Ajoute un message à l'historique en respectant les limites
+    fn add_message(&mut self, mut message: Message) {
+        // Estimer et stocker les tokens du message
+        let message_tokens = self.estimate_and_set_tokens(&mut message);
+        self.total_tokens += message_tokens;
+        
+        if self.debug {
+            println!("[Debug] Adding message: {} tokens, total: {}", message_tokens, self.total_tokens);
+        }
+        
+        self.messages.push(message);
+        
+        // Appliquer les limites
+        self.trim_to_limits();
+    }
+    
+    // Supprime un bloc de messages et met à jour le compteur de tokens
+    fn remove_messages(&mut self, range: std::ops::Range<usize>) {
+        let removed_tokens: u32 = self.messages[range.clone()]
+            .iter()
+            .map(|msg| msg.token_count.unwrap_or(0))
+            .sum();
+        
+        self.total_tokens -= removed_tokens;
+        self.messages.drain(range);
+        
+        if self.debug {
+            println!("[Debug] Removed {} tokens, new total: {}", removed_tokens, self.total_tokens);
+        }
+    }
+    
+    // Applique toutes les limites (messages et tokens)
+    fn trim_to_limits(&mut self) {
+        let mut needs_trimming = false;
+        
+        // Vérifier la limite de messages
+        if let Some(max_messages) = self.max_history_messages {
+            if self.messages.len() > max_messages {
+                if self.debug {
+                    println!("[Debug] Exceeded message limit: {} > {}", self.messages.len(), max_messages);
+                }
+                needs_trimming = true;
+            }
+        }
+        
+        // Vérifier la limite de tokens
+        if let Some(max_tokens) = self.max_context_tokens {
+            if self.total_tokens > max_tokens {
+                if self.debug {
+                    println!("[Debug] Exceeded token limit: {} > {}", self.total_tokens, max_tokens);
+                }
+                needs_trimming = true;
+            }
+        }
+        
+        if needs_trimming {
+            self.trim_history_smart();
+        }
+    }
+    
+    // Tronque l'historique de manière intelligente pour optimiser le cache KV
+    // Prend en compte à la fois les limites de messages et de tokens
+    fn trim_history_smart(&mut self) {
+        // Rien à faire si pas de limites
+        if self.max_history_messages.is_none() && self.max_context_tokens.is_none() {
+            return;
+        }
+        
+        // Calculer combien il faut supprimer pour respecter les limites
+        let mut messages_to_remove = 0;
+        let mut tokens_to_remove = 0;
+        
+        // Limite de messages
+        if let Some(max_messages) = self.max_history_messages {
+            if self.messages.len() > max_messages {
+                messages_to_remove = self.messages.len() - max_messages;
+            }
+        }
+        
+        // Limite de tokens
+        if let Some(max_tokens) = self.max_context_tokens {
+            if self.total_tokens > max_tokens {
+                tokens_to_remove = self.total_tokens - max_tokens;
+            }
+        }
+        
+        if messages_to_remove == 0 && tokens_to_remove == 0 {
+            return; // Dans les limites
+        }
+        
+        if self.debug {
+            println!("[Debug] Need to remove: {} messages and/or {} tokens", messages_to_remove, tokens_to_remove);
+            println!("[Debug] Current: {} messages, {} tokens", self.messages.len(), self.total_tokens);
+        }
+        
+        // Stratégie : déterminer combien de messages supprimer
+        // On doit supprimer au moins assez pour respecter la limite de messages
+        // et aussi assez pour respecter la limite de tokens
+        let mut min_messages_to_remove = messages_to_remove;
+        
+        // Si on a une limite de tokens, calculer combien de messages il faut supprimer
+        // pour atteindre cette limite
+        if tokens_to_remove > 0 {
+            let mut accumulated_tokens = 0;
+            let mut messages_needed_for_tokens = 0;
+            
+            // Parcourir les messages du début (après système) pour estimer
+            // combien en supprimer pour atteindre tokens_to_remove
+            let system_count = if !self.messages.is_empty() && self.messages[0].role == "system" {
+                1
+            } else {
+                0
+            };
+            
+            for i in system_count..self.messages.len() {
+                if accumulated_tokens >= tokens_to_remove {
+                    break;
+                }
+                accumulated_tokens += self.messages[i].token_count.unwrap_or(0);
+                messages_needed_for_tokens += 1;
+            }
+            
+            // Prendre le maximum entre messages_to_remove et messages_needed_for_tokens
+            min_messages_to_remove = std::cmp::max(min_messages_to_remove, messages_needed_for_tokens);
+        }
+        
+        if min_messages_to_remove == 0 {
+            return;
+        }
+        
+        // Identifier le message système
+        let system_count = if !self.messages.is_empty() && self.messages[0].role == "system" {
+            1
+        } else {
+            0
+        };
+        
+        // Paramètres d'optimisation du cache
+        const PROTECTED_RATIO: f32 = 0.25; // 25% des messages protégés
+        const MIN_PROTECTED_MESSAGES: usize = 3; // Au moins système + 2 autres
+        
+        // Taille du segment protégé
+        let total_messages = self.messages.len();
+        let mut protected_size = std::cmp::max(
+            system_count + MIN_PROTECTED_MESSAGES.saturating_sub(1), // système + (MIN-1) autres
+            (total_messages as f32 * PROTECTED_RATIO).ceil() as usize
+        );
+        protected_size = protected_size.min(total_messages - 2); // Garder au moins 2 messages à la fin
+        
+        // Où commencer la suppression ? Après le segment protégé si possible
+        let delete_start_index = protected_size;
+        
+        // Où terminer la suppression ? On essaie de supprimer min_messages_to_remove messages
+        let mut delete_end_index = delete_start_index + min_messages_to_remove;
+        
+        // S'assurer qu'on ne supprime pas les derniers messages
+        let min_keep_at_end = 2;
+        let max_delete_index = total_messages - min_keep_at_end;
+        
+        if delete_start_index >= max_delete_index {
+            // Cas rare : segment protégé trop grand, supprimer à la fin
+            let delete_end = total_messages - min_keep_at_end;
+            let delete_start = delete_end.saturating_sub(min_messages_to_remove);
+            if delete_start < delete_end {
+                if self.debug {
+                    println!("[Debug] Deleting from end: messages[{}..{}] (protected segment too large)", delete_start, delete_end);
+                }
+                self.remove_messages(delete_start..delete_end);
+            }
+        } else {
+            // Limiter la suppression à max_delete_index
+            delete_end_index = delete_end_index.min(max_delete_index);
+            
+            if delete_end_index > delete_start_index {
+                // Essayer d'ajuster pour supprimer sur une frontière de conversation
+                let adjusted_end = self.find_better_boundary(delete_start_index, delete_end_index);
+                
+                if adjusted_end > delete_start_index && adjusted_end <= max_delete_index {
+                    if self.debug {
+                        println!("[Debug] Deleting with adjusted boundary: messages[{}..{}]", delete_start_index, adjusted_end);
+                    }
+                    self.remove_messages(delete_start_index..adjusted_end);
+                } else if delete_end_index > delete_start_index {
+                    if self.debug {
+                        println!("[Debug] Deleting: messages[{}..{}]", delete_start_index, delete_end_index);
+                    }
+                    self.remove_messages(delete_start_index..delete_end_index);
+                }
+            }
+        }
+        
+        // Si après suppression on est encore au-dessus des limites
+        // (peut arriver si on n'a pas pu supprimer assez), tronquer les plus anciens
+        // (après le système) en dernier recours
+        let mut still_needs_trimming = false;
+        
+        if let Some(max_messages) = self.max_history_messages {
+            if self.messages.len() > max_messages {
+                still_needs_trimming = true;
+            }
+        }
+        
+        if let Some(max_tokens) = self.max_context_tokens {
+            if self.total_tokens > max_tokens {
+                still_needs_trimming = true;
+            }
+        }
+        
+        if still_needs_trimming && self.messages.len() > system_count + 1 {
+            let excess_messages = self.messages.len() - std::cmp::max(
+                self.max_history_messages.unwrap_or(0),
+                system_count + 1
+            );
+            let excess_tokens = if self.max_context_tokens.is_some() {
+                self.total_tokens.saturating_sub(self.max_context_tokens.unwrap())
+            } else {
+                0
+            };
+            
+            // Supprimer assez de messages pour respecter les deux limites
+            let mut to_remove = excess_messages;
+            if excess_tokens > 0 {
+                // Calculer combien de messages supplémentaires supprimer pour les tokens
+                let mut token_count = 0;
+                let mut additional_messages = 0;
+                for i in system_count..self.messages.len() {
+                    if token_count >= excess_tokens {
+                        break;
+                    }
+                    token_count += self.messages[i].token_count.unwrap_or(0);
+                    additional_messages += 1;
+                }
+                to_remove = std::cmp::max(to_remove, additional_messages);
+            }
+            
+            if to_remove > 0 && self.messages.len() > system_count + to_remove {
+                if self.debug {
+                    println!("[Debug] Fallback deletion: messages[{}..{}]", system_count, system_count + to_remove);
+                }
+                self.remove_messages(system_count..system_count + to_remove);
+            }
+        }
+    }
+    
+    // Trouve une meilleure frontière pour la suppression (optimisation cache)
+    fn find_better_boundary(&self, start: usize, end: usize) -> usize {
+        if end >= self.messages.len() {
+            return self.messages.len();
+        }
+        
+        // Chercher une frontière naturelle près de 'end'
+        // Préférer : après un message assistant (sans tool_calls) ou avant un user
+        
+        // Chercher vers l'avant depuis end
+        for i in end..self.messages.len() {
+            if i > 0 && i - 1 >= start {
+                let prev = &self.messages[i-1];
+                // Bonne frontière : après un assistant sans tool_calls
+                if prev.role == "assistant" && prev.tool_calls.is_none() {
+                    return i;
+                }
+            }
+            // Bonne frontière : avant un user
+            if self.messages[i].role == "user" && i > start {
+                return i;
+            }
+        }
+        
+        // Chercher vers l'arrière depuis end
+        for i in (start+1..=end.min(self.messages.len()-1)).rev() {
+            if i > 0 {
+                let prev = &self.messages[i-1];
+                if prev.role == "assistant" && prev.tool_calls.is_none() {
+                    return i;
+                }
+            }
+            if self.messages[i].role == "user" && i > start {
+                return i;
+            }
+        }
+        
+        // Retourner la position originale
+        end
+    }
+    
+    // Tronque l'historique de manière intelligente pour optimiser le cache KV (ancienne version basée sur messages)
+    fn trim_history_smart_old(&mut self, max_messages: usize) {
+        let total_messages = self.messages.len();
+        if total_messages <= max_messages {
+            return; // Dans la limite, rien à faire
+        }
+        
+        if self.debug {
+            println!("[Debug] Trimming history: {} > {} messages", total_messages, max_messages);
+        }
+        
+        // Paramètres d'optimisation du cache
+        const PROTECTED_RATIO: f32 = 0.25; // 25% des messages protégés au début (pour le cache)
+        const DELETE_BATCH_RATIO: f32 = 0.15; // Supprimer 15% à la fois
+        
+        // Identifier le message système
+        let has_system_message = !self.messages.is_empty() && self.messages[0].role == "system";
+        let system_count = if has_system_message { 1 } else { 0 };
+        
+        // Taille du segment protégé (inclut le message système)
+        let protected_size = std::cmp::max(
+            system_count + 2, // Au moins système + 2 autres messages
+            (max_messages as f32 * PROTECTED_RATIO).ceil() as usize
+        ).min(max_messages - 2); // Mais pas plus que max-2
+        
+        // Taille du batch de suppression
+        let delete_batch_size = std::cmp::max(
+            2, // Au moins 2 messages
+            (max_messages as f32 * DELETE_BATCH_RATIO).ceil() as usize
+        );
+        
+        // Calculer combien de messages on doit supprimer
+        let messages_to_remove = total_messages - max_messages;
+        
+        // On supprime par batch, mais pas plus que nécessaire
+        let actual_batch_size = std::cmp::min(messages_to_remove, delete_batch_size);
+        
+        if actual_batch_size == 0 {
+            return;
+        }
+        
+        // Où supprimer ? On essaie de supprimer juste après le segment protégé
+        // pour préserver le préfixe pour le cache
+        let delete_start_index = protected_size;
+        
+        if self.debug {
+            println!("[Debug] Protected size: {}, delete batch: {}, actual batch: {}, start index: {}", 
+                     protected_size, delete_batch_size, actual_batch_size, delete_start_index);
+        }
+        
+        // S'assurer qu'on ne supprime pas les derniers messages (garder au moins 2 messages récents)
+        let min_keep_at_end = 2;
+        let max_delete_index = total_messages - min_keep_at_end;
+        
+        if delete_start_index >= max_delete_index {
+            // Cas rare : segment protégé trop grand, on doit supprimer à la fin
+            // (moins bon pour le cache, mais évite de tout supprimer)
+            let delete_end = total_messages - min_keep_at_end;
+            let delete_start = delete_end.saturating_sub(actual_batch_size);
+            if delete_start < delete_end {
+                if self.debug {
+                    println!("[Debug] Deleting from end: messages[{}..{}] (protected segment too large)", delete_start, delete_end);
+                }
+                self.messages.drain(delete_start..delete_end);
+            }
+        } else {
+            // Supprimer après le segment protégé
+            let delete_end_index = std::cmp::min(
+                delete_start_index + actual_batch_size,
+                max_delete_index
+            );
+            
+            if delete_end_index > delete_start_index {
+                // Essayer d'ajuster pour supprimer sur une frontière de conversation
+                let adjusted_end = self.find_better_boundary_old(delete_start_index, delete_end_index);
+                
+                if adjusted_end > delete_start_index && adjusted_end <= max_delete_index {
+                    if self.debug {
+                        println!("[Debug] Deleting with adjusted boundary: messages[{}..{}]", delete_start_index, adjusted_end);
+                    }
+                    self.messages.drain(delete_start_index..adjusted_end);
+                } else if delete_end_index > delete_start_index {
+                    if self.debug {
+                        println!("[Debug] Deleting: messages[{}..{}]", delete_start_index, delete_end_index);
+                    }
+                    self.messages.drain(delete_start_index..delete_end_index);
+                }
+            }
+        }
+        
+        // Si après suppression on est encore au-dessus de la limite
+        // (peut arriver si on n'a pas pu supprimer assez), tronquer les plus anciens
+        // (après le système) en dernier recours
+        if self.messages.len() > max_messages {
+            let excess = self.messages.len() - max_messages;
+            if excess > 0 && self.messages.len() > system_count + excess {
+                if self.debug {
+                    println!("[Debug] Fallback deletion: messages[{}..{}]", system_count, system_count + excess);
+                }
+                self.messages.drain(system_count..system_count + excess);
+            }
+        }
+    }
+    
+    // Trouve une meilleure frontière pour la suppression (ancienne version)
+    fn find_better_boundary_old(&self, start: usize, end: usize) -> usize {
+        if end >= self.messages.len() {
+            return self.messages.len();
+        }
+        
+        // Chercher une frontière naturelle près de 'end'
+        // Préférer : après un message assistant (sans tool_calls) ou avant un user
+        
+        // Chercher vers l'avant depuis end
+        for i in end..self.messages.len() {
+            if i > 0 && i - 1 >= start {
+                let prev = &self.messages[i-1];
+                // Bonne frontière : après un assistant sans tool_calls
+                if prev.role == "assistant" && prev.tool_calls.is_none() {
+                    return i;
+                }
+            }
+            // Bonne frontière : avant un user
+            if self.messages[i].role == "user" && i > start {
+                return i;
+            }
+        }
+        
+        // Chercher vers l'arrière depuis end
+        for i in (start+1..=end.min(self.messages.len()-1)).rev() {
+            if i > 0 {
+                let prev = &self.messages[i-1];
+                if prev.role == "assistant" && prev.tool_calls.is_none() {
+                    return i;
+                }
+            }
+            if self.messages[i].role == "user" && i > start {
+                return i;
+            }
+        }
+        
+        // Retourner la position originale
+        end
+    }
+}
+
+// Fonction helper pour parser les variables d'environnement CSV
+fn parse_csv_env_var(var_name: &str) -> Option<Vec<String>> {
+    env::var(var_name).ok().map(|s| {
+        s.split(',')
+            .map(|item| item.trim().to_string())
+            .filter(|item| !item.is_empty())
+            .collect()
+    })
+}
+
+// ------------------ Main ------------------
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Variables d'environnement requises
+    let api_key = env::var("DEEPSEEK_API_KEY").expect("DEEPSEEK_API_KEY not found");
+    
+    // Variables d'environnement optionnelles
+    let model = env::var("DEEPSEEK_AGENT_MODEL").ok();
+    let system_prompt = env::var("DEEPSEEK_AGENT_SYSTEM_PROMPT").ok();
+    
+    // Listes CSV
+    let whitelist = parse_csv_env_var("DEEPSEEK_AGENT_WHITELIST");
+    let blacklist = parse_csv_env_var("DEEPSEEK_AGENT_BLACKLIST");
+    
+    // Limite d'historique (messages)
+    let max_history_messages = env::var("DEEPSEEK_AGENT_MAX_HISTORY_MESSAGES")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok());
+    
+    // Limite de contexte (tokens)
+    let max_context_tokens = env::var("DEEPSEEK_AGENT_MAX_CONTEXT_TOKENS")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .or_else(|| {
+            // Si non spécifié, calculer la valeur par défaut selon le modèle
+            Some(default_max_context_tokens_for_model(&model))
+        });
+    
+    // Gestion des retries
+    let max_retries = env::var("DEEPSEEK_AGENT_MAX_RETRIES")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok());
+    let retry_delay_ms = env::var("DEEPSEEK_AGENT_RETRY_DELAY_MS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok());
+    let max_retry_delay_ms = env::var("DEEPSEEK_AGENT_MAX_RETRY_DELAY_MS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok());
+    let shell_timeout_ms = env::var("DEEPSEEK_AGENT_SHELL_TIMEOUT_MS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok());
+    
+    // Log de configuration (debug)
+    if std::env::var("DEEPSEEK_AGENT_DEBUG").is_ok() {
+        println!("[Debug] Configuration chargée :");
+        println!("  Modèle: {:?}", model.as_ref().unwrap_or(&"deepseek-chat (défaut)".to_string()));
+        println!("  Prompt système: {:?}", system_prompt.as_ref().map(|_| "[présent]").unwrap_or("défaut"));
+        println!("  Liste blanche: {:?}", whitelist);
+        println!("  Liste noire: {:?}", blacklist);
+        println!("  Limite historique: {:?}", max_history_messages);
+        println!("  Limite tokens: {:?}", max_context_tokens);
+        let default_tokens = default_max_context_tokens_for_model(&model);
+        println!("  Limite tokens par défaut pour ce modèle: {}", default_tokens);
+        println!("  Calibration tokens: activée");
+        println!("  Max retries: {:?}", max_retries);
+        println!("  Retry delay ms: {:?}", retry_delay_ms);
+        println!("  Max retry delay ms: {:?}", max_retry_delay_ms);
+        println!("  Shell timeout ms: {:?}", shell_timeout_ms);
+    }
+    
+    let debug = std::env::var("DEEPSEEK_AGENT_DEBUG").is_ok();
+
+    let mut agent = Agent::new(
+        api_key,
+        model,
+        system_prompt,
+        whitelist,
+        blacklist,
+        max_history_messages,
+        max_context_tokens,
+        debug,
+        max_retries,
+        retry_delay_ms,
+        max_retry_delay_ms,
+        shell_timeout_ms,
+    );
+    
+    agent.run().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_default_max_context_tokens_for_model() {
+        // Test avec modèle non spécifié (défaut deepseek-chat)
+        assert_eq!(default_max_context_tokens_for_model(&None), 112_000);
+        
+        // Test deepseek-chat
+        assert_eq!(default_max_context_tokens_for_model(&Some("deepseek-chat".to_string())), 112_000);
+        
+        // Test deepseek-reasoner
+        assert_eq!(default_max_context_tokens_for_model(&Some("deepseek-reasoner".to_string())), 104_000);
+        
+        // Test modèle inconnu
+        assert_eq!(default_max_context_tokens_for_model(&Some("deepseek-coder".to_string())), 28_000);
+        assert_eq!(default_max_context_tokens_for_model(&Some("gpt-4".to_string())), 28_000);
+    }
+    
+    #[test]
+    fn test_estimate_tokens() {
+        // Test avec texte vide
+        assert_eq!(estimate_tokens(""), 0);
+        
+        // Test avec texte court (moins de 3 caractères)
+        assert_eq!(estimate_tokens("hi"), 1);
+        
+        // Test avec texte plus long
+        let text = "Hello world, this is a test."; // 28 caractères
+        let expected = 28 / 3; // 9
+        assert_eq!(estimate_tokens(text), expected);
+    }
+}
