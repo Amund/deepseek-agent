@@ -1,8 +1,11 @@
+use futures::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::Path;
+
 use tokio::process::Command;
 use tokio::time::{sleep, timeout, Duration};
 
@@ -121,6 +124,8 @@ struct ChatRequest {
     messages: Vec<Message>,
     tools: Vec<Tool>,
     tool_choice: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    stream: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -140,7 +145,9 @@ struct ToolFunction {
 #[derive(Debug, Deserialize)]
 struct Usage {
     prompt_tokens: u32,
+    #[allow(dead_code)]
     completion_tokens: u32,
+    #[allow(dead_code)]
     total_tokens: u32,
     prompt_cache_hit_tokens: Option<u32>,
     prompt_cache_miss_tokens: Option<u32>,
@@ -155,6 +162,49 @@ struct ChatResponse {
 #[derive(Debug, Deserialize)]
 struct Choice {
     message: Message,
+}
+
+// Structures pour le streaming
+#[derive(Debug, Deserialize)]
+struct ChatChunk {
+    choices: Vec<ChunkChoice>,
+    usage: Option<Usage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChunkChoice {
+    delta: ChunkDelta,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChunkDelta {
+    #[serde(default)]
+    role: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<Vec<ToolCallDelta>>,
+}
+
+// Structures pour les tool_calls streaming (champs optionnels)
+#[derive(Debug, Deserialize, Clone)]
+struct ToolCallDelta {
+    #[serde(default)]
+    index: Option<u32>, // index dans le tableau tool_calls
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(rename = "type", default)]
+    call_type: Option<String>,
+    #[serde(default)]
+    function: Option<FunctionCallDelta>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct FunctionCallDelta {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    arguments: Option<String>,
 }
 
 // ------------------ Agent ------------------
@@ -177,6 +227,7 @@ struct Agent {
     token_calibration_factor: f32, // facteur pour ajuster les estimations
     total_real_tokens_observed: u32, // total des tokens réels observés (pour stats)
     total_estimated_tokens: u32,   // total des tokens estimés correspondants
+    stream: bool,                  // streaming des réponses
 }
 
 impl Agent {
@@ -193,6 +244,7 @@ impl Agent {
         retry_delay_ms: Option<u64>,
         max_retry_delay_ms: Option<u64>,
         shell_timeout_ms: Option<u64>,
+        stream: Option<bool>,
     ) -> Self {
         Agent {
             client: Client::new(),
@@ -210,6 +262,7 @@ impl Agent {
             retry_delay_ms: retry_delay_ms.unwrap_or(DEFAULT_RETRY_DELAY_MS),
             max_retry_delay_ms: max_retry_delay_ms.unwrap_or(DEFAULT_MAX_RETRY_DELAY_MS),
             shell_timeout_ms,
+            stream: stream.unwrap_or(false),
             token_calibration_factor: 1.0,
             total_real_tokens_observed: 0,
             total_estimated_tokens: 0,
@@ -338,6 +391,7 @@ impl Agent {
                 },
             }],
             tool_choice: "auto".into(),
+            stream: self.stream,
         };
 
         let mut last_error: Option<Box<dyn std::error::Error>> = None;
@@ -354,17 +408,15 @@ impl Agent {
                 Ok(resp) => {
                     // Vérifier le statut HTTP
                     if resp.status().is_success() {
-                        match resp.json::<ChatResponse>().await {
+                        match self.process_response(resp, &request).await {
                             Ok(response) => {
-                                // Calibration des tokens basée sur la réponse API
-                                self.calibrate_with_response(&request, &response);
                                 return Ok(response);
                             }
                             Err(e) => {
-                                last_error = Some(e.into());
+                                last_error = Some(e);
                                 if self.debug {
                                     println!(
-                                        "[Debug] JSON parsing error on attempt {}: {}",
+                                        "[Debug] Error processing response on attempt {}: {}",
                                         attempt,
                                         last_error.as_ref().unwrap()
                                     );
@@ -419,6 +471,229 @@ impl Agent {
 
         // Si on arrive ici, toutes les tentatives ont échoué
         Err(last_error.unwrap_or_else(|| "Unknown error".into()))
+    }
+
+    // Traite une réponse streaming ou non-streaming
+    async fn process_response(
+        &mut self,
+        resp: reqwest::Response,
+        request: &ChatRequest,
+    ) -> Result<ChatResponse, Box<dyn std::error::Error>> {
+        if self.stream {
+            // Mode streaming
+            let mut accumulated_message = Message {
+                role: "assistant".to_string(),
+                content: String::new(),
+                tool_calls: None,
+                tool_call_id: None,
+                token_count: None,
+            };
+            // Pour construire les tool_calls en streaming
+            #[derive(Debug, Default)]
+            struct ToolCallBuilder {
+                index: Option<u32>,
+                id: Option<String>,
+                call_type: Option<String>,
+                function_name: Option<String>,
+                function_arguments: Option<String>,
+                converted: bool,
+            }
+
+            impl ToolCallBuilder {
+                fn is_complete(&self) -> bool {
+                    !self.converted
+                        && self.id.is_some()
+                        && self.call_type.is_some()
+                        && self.function_name.is_some()
+                        && self.function_arguments.is_some()
+                }
+
+                fn to_tool_call(&mut self) -> Option<ToolCall> {
+                    if !self.is_complete() {
+                        return None;
+                    }
+                    self.converted = true;
+                    Some(ToolCall {
+                        id: self.id.clone().unwrap(),
+                        call_type: self.call_type.clone().unwrap(),
+                        function: FunctionCall {
+                            name: self.function_name.clone().unwrap(),
+                            arguments: self.function_arguments.clone().unwrap(),
+                        },
+                    })
+                }
+
+                fn update_from_delta(&mut self, delta: &ToolCallDelta) {
+                    if self.converted {
+                        return;
+                    }
+                    if let Some(index) = delta.index {
+                        self.index = Some(index);
+                    }
+                    if let Some(id) = &delta.id {
+                        self.id = Some(id.clone());
+                    }
+                    if let Some(call_type) = &delta.call_type {
+                        self.call_type = Some(call_type.clone());
+                    }
+                    if let Some(function) = &delta.function {
+                        if let Some(name) = &function.name {
+                            self.function_name = Some(name.clone());
+                        }
+                        if let Some(arguments) = &function.arguments {
+                            self.function_arguments = Some(arguments.clone());
+                        }
+                    }
+                }
+
+                fn default() -> Self {
+                    ToolCallBuilder {
+                        index: None,
+                        id: None,
+                        call_type: None,
+                        function_name: None,
+                        function_arguments: None,
+                        converted: false,
+                    }
+                }
+            }
+
+            let mut tool_call_builders: Vec<ToolCallBuilder> = Vec::new();
+            let mut accumulated_tool_calls: Vec<ToolCall> = Vec::new();
+            let mut usage: Option<Usage> = None;
+
+            // Lire le stream ligne par ligne
+            let stream = resp.bytes_stream();
+            tokio::pin!(stream);
+            let mut buffer = String::new();
+            let mut stream_done = false;
+            // START STREAMING WHILE BLOCK
+            while let Some(item) = stream.next().await {
+                if stream_done {
+                    break;
+                }
+                match item {
+                    Ok(bytes) => {
+                        let chunk_str = String::from_utf8_lossy(&bytes);
+                        if self.debug {
+                            println!("[Debug] Raw chunk: {:?}", chunk_str);
+                        }
+                        buffer.push_str(&chunk_str);
+
+                        // Traiter les lignes complètes dans le buffer
+                        let all_lines: Vec<String> =
+                            buffer.split('\n').map(|s| s.to_string()).collect();
+                        let mut lines = all_lines;
+                        // Garder la dernière ligne (potentiellement incomplète) dans le buffer
+                        if let Some(last) = lines.pop() {
+                            buffer = last;
+                        } else {
+                            buffer.clear();
+                        }
+
+                        for line in lines {
+                            if line.starts_with("data: ") {
+                                let data = &line[6..]; // Supprimer "data: "
+                                if data.trim() == "[DONE]" {
+                                    stream_done = true;
+                                    break;
+                                }
+                                if self.debug {
+                                    println!("[Debug] SSE data: {}", data);
+                                }
+                                match serde_json::from_str::<ChatChunk>(data) {
+                                    Ok(chunk) => {
+                                        for choice in chunk.choices {
+                                            let delta = choice.delta;
+                                            if let Some(content) = delta.content {
+                                                // Afficher le contenu au fur et à mesure
+                                                print!("{}", content);
+                                                std::io::stdout().flush().ok();
+                                                accumulated_message.content.push_str(&content);
+                                            }
+                                            if let Some(tool_calls) = delta.tool_calls {
+                                                if self.debug {
+                                                    println!(
+                                                        "[Debug] Tool calls delta: {:?}",
+                                                        tool_calls
+                                                    );
+                                                }
+                                                for tool_call_delta in tool_calls {
+                                                    let index =
+                                                        tool_call_delta.index.unwrap_or(0) as usize;
+                                                    // Étendre le vecteur si nécessaire
+                                                    while tool_call_builders.len() <= index {
+                                                        tool_call_builders
+                                                            .push(ToolCallBuilder::default());
+                                                    }
+                                                    tool_call_builders[index]
+                                                        .update_from_delta(&tool_call_delta);
+
+                                                    // Vérifier si le builder est complet et le convertir
+                                                    if let Some(tool_call) =
+                                                        tool_call_builders[index].to_tool_call()
+                                                    {
+                                                        accumulated_tool_calls.push(tool_call);
+                                                    }
+                                                }
+                                            }
+                                            if let Some(role) = delta.role {
+                                                accumulated_message.role = role;
+                                            }
+                                        }
+                                        // Si le chunk contient des infos d'usage, les sauvegarder
+                                        if let Some(chunk_usage) = chunk.usage {
+                                            usage = Some(chunk_usage);
+                                        }
+                                    }
+                                    Err(e) => {
+                                        if self.debug {
+                                            println!("[Debug] Error parsing chunk: {}", e);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        if self.debug {
+                            println!("[Debug] Stream chunk error: {}", e);
+                        }
+                        // On continue malgré les erreurs de chunk
+                    }
+                }
+            }
+            // END STREAMING WHILE BLOCK
+            println!(); // Nouvelle ligne après le streaming
+
+            // Si nous avons accumulé des tool_calls, les ajouter au message
+            if !accumulated_tool_calls.is_empty() {
+                accumulated_message.tool_calls = Some(accumulated_tool_calls);
+            }
+
+            // Créer une réponse factice avec le message accumulé
+            let response = ChatResponse {
+                choices: vec![Choice {
+                    message: accumulated_message,
+                }],
+                usage: usage.unwrap_or_else(|| Usage {
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    total_tokens: 0,
+                    prompt_cache_hit_tokens: None,
+                    prompt_cache_miss_tokens: None,
+                }),
+            };
+
+            // Calibration des tokens (si usage disponible)
+            self.calibrate_with_response(request, &response);
+            Ok(response)
+        } else {
+            // Mode non-streaming
+            let response = resp.json::<ChatResponse>().await?;
+            self.calibrate_with_response(request, &response);
+            Ok(response)
+        }
     }
 
     // Calibre les estimations de tokens basées sur la réponse réelle de l'API
@@ -596,9 +871,6 @@ impl Agent {
                 ));
             }
         }
-
-        // TODO: Validation plus avancée des séparateurs de commandes
-        // avec prise en compte des guillemets et des échappements
 
         Ok(())
     }
@@ -936,169 +1208,6 @@ impl Agent {
         // Retourner la position originale
         end
     }
-
-    // Tronque l'historique de manière intelligente pour optimiser le cache KV (ancienne version basée sur messages)
-    fn trim_history_smart_old(&mut self, max_messages: usize) {
-        let total_messages = self.messages.len();
-        if total_messages <= max_messages {
-            return; // Dans la limite, rien à faire
-        }
-
-        if self.debug {
-            println!(
-                "[Debug] Trimming history: {} > {} messages",
-                total_messages, max_messages
-            );
-        }
-
-        // Paramètres d'optimisation du cache
-        const PROTECTED_RATIO: f32 = 0.25; // 25% des messages protégés au début (pour le cache)
-        const DELETE_BATCH_RATIO: f32 = 0.15; // Supprimer 15% à la fois
-
-        // Identifier le message système
-        let has_system_message = !self.messages.is_empty() && self.messages[0].role == "system";
-        let system_count = if has_system_message { 1 } else { 0 };
-
-        // Taille du segment protégé (inclut le message système)
-        let protected_size = std::cmp::max(
-            system_count + 2, // Au moins système + 2 autres messages
-            (max_messages as f32 * PROTECTED_RATIO).ceil() as usize,
-        )
-        .min(max_messages - 2); // Mais pas plus que max-2
-
-        // Taille du batch de suppression
-        let delete_batch_size = std::cmp::max(
-            2, // Au moins 2 messages
-            (max_messages as f32 * DELETE_BATCH_RATIO).ceil() as usize,
-        );
-
-        // Calculer combien de messages on doit supprimer
-        let messages_to_remove = total_messages - max_messages;
-
-        // On supprime par batch, mais pas plus que nécessaire
-        let actual_batch_size = std::cmp::min(messages_to_remove, delete_batch_size);
-
-        if actual_batch_size == 0 {
-            return;
-        }
-
-        // Où supprimer ? On essaie de supprimer juste après le segment protégé
-        // pour préserver le préfixe pour le cache
-        let delete_start_index = protected_size;
-
-        if self.debug {
-            println!(
-                "[Debug] Protected size: {}, delete batch: {}, actual batch: {}, start index: {}",
-                protected_size, delete_batch_size, actual_batch_size, delete_start_index
-            );
-        }
-
-        // S'assurer qu'on ne supprime pas les derniers messages (garder au moins 2 messages récents)
-        let min_keep_at_end = 2;
-        let max_delete_index = total_messages - min_keep_at_end;
-
-        if delete_start_index >= max_delete_index {
-            // Cas rare : segment protégé trop grand, on doit supprimer à la fin
-            // (moins bon pour le cache, mais évite de tout supprimer)
-            let delete_end = total_messages - min_keep_at_end;
-            let delete_start = delete_end.saturating_sub(actual_batch_size);
-            if delete_start < delete_end {
-                if self.debug {
-                    println!(
-                        "[Debug] Deleting from end: messages[{}..{}] (protected segment too large)",
-                        delete_start, delete_end
-                    );
-                }
-                self.messages.drain(delete_start..delete_end);
-            }
-        } else {
-            // Supprimer après le segment protégé
-            let delete_end_index =
-                std::cmp::min(delete_start_index + actual_batch_size, max_delete_index);
-
-            if delete_end_index > delete_start_index {
-                // Essayer d'ajuster pour supprimer sur une frontière de conversation
-                let adjusted_end =
-                    self.find_better_boundary_old(delete_start_index, delete_end_index);
-
-                if adjusted_end > delete_start_index && adjusted_end <= max_delete_index {
-                    if self.debug {
-                        println!(
-                            "[Debug] Deleting with adjusted boundary: messages[{}..{}]",
-                            delete_start_index, adjusted_end
-                        );
-                    }
-                    self.messages.drain(delete_start_index..adjusted_end);
-                } else if delete_end_index > delete_start_index {
-                    if self.debug {
-                        println!(
-                            "[Debug] Deleting: messages[{}..{}]",
-                            delete_start_index, delete_end_index
-                        );
-                    }
-                    self.messages.drain(delete_start_index..delete_end_index);
-                }
-            }
-        }
-
-        // Si après suppression on est encore au-dessus de la limite
-        // (peut arriver si on n'a pas pu supprimer assez), tronquer les plus anciens
-        // (après le système) en dernier recours
-        if self.messages.len() > max_messages {
-            let excess = self.messages.len() - max_messages;
-            if excess > 0 && self.messages.len() > system_count + excess {
-                if self.debug {
-                    println!(
-                        "[Debug] Fallback deletion: messages[{}..{}]",
-                        system_count,
-                        system_count + excess
-                    );
-                }
-                self.messages.drain(system_count..system_count + excess);
-            }
-        }
-    }
-
-    // Trouve une meilleure frontière pour la suppression (ancienne version)
-    fn find_better_boundary_old(&self, start: usize, end: usize) -> usize {
-        if end >= self.messages.len() {
-            return self.messages.len();
-        }
-
-        // Chercher une frontière naturelle près de 'end'
-        // Préférer : après un message assistant (sans tool_calls) ou avant un user
-
-        // Chercher vers l'avant depuis end
-        for i in end..self.messages.len() {
-            if i > 0 && i - 1 >= start {
-                let prev = &self.messages[i - 1];
-                // Bonne frontière : après un assistant sans tool_calls
-                if prev.role == "assistant" && prev.tool_calls.is_none() {
-                    return i;
-                }
-            }
-            // Bonne frontière : avant un user
-            if self.messages[i].role == "user" && i > start {
-                return i;
-            }
-        }
-
-        // Chercher vers l'arrière depuis end
-        for i in (start + 1..=end.min(self.messages.len() - 1)).rev() {
-            if i > 0 {
-                let prev = &self.messages[i - 1];
-                if prev.role == "assistant" && prev.tool_calls.is_none() {
-                    return i;
-                }
-            }
-            if self.messages[i].role == "user" && i > start {
-                return i;
-            }
-        }
-
-        // Retourner la position originale
-        end
-    }
 }
 
 // Fonction helper pour parser les variables d'environnement CSV
@@ -1241,6 +1350,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .and_then(|s| s.parse::<u64>().ok());
 
+    // Streaming des réponses (par défaut désactivé)
+    let stream = env::var("DEEPSEEK_AGENT_STREAM")
+        .ok()
+        .map(|s| s.parse::<bool>().unwrap_or(false))
+        .unwrap_or(false);
+
     // Log de configuration (debug)
     if std::env::var("DEEPSEEK_AGENT_DEBUG").is_ok() {
         println!("[Debug] Configuration chargée :");
@@ -1271,6 +1386,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  Retry delay ms: {:?}", retry_delay_ms);
         println!("  Max retry delay ms: {:?}", max_retry_delay_ms);
         println!("  Shell timeout ms: {:?}", shell_timeout_ms);
+        println!("  Streaming: {:?}", stream);
     }
 
     let debug = std::env::var("DEEPSEEK_AGENT_DEBUG").is_ok();
@@ -1288,6 +1404,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         retry_delay_ms,
         max_retry_delay_ms,
         shell_timeout_ms,
+        Some(stream),
     );
 
     agent.run().await
@@ -1337,5 +1454,63 @@ mod tests {
         let text = "Hello world, this is a test."; // 28 caractères
         let expected = 28 / 3; // 9
         assert_eq!(estimate_tokens(text), expected);
+    }
+
+    #[test]
+    fn test_parse_streaming_chunk() {
+        let json = r#"{
+            "choices": [
+                {
+                    "delta": {
+                        "content": "Hello"
+                    },
+                    "index": 0
+                }
+            ]
+        }"#;
+        let chunk: ChatChunk = serde_json::from_str(json).unwrap();
+        assert_eq!(chunk.choices.len(), 1);
+        assert_eq!(chunk.choices[0].delta.content, Some("Hello".to_string()));
+    }
+
+    #[test]
+    fn test_parse_streaming_chunk_with_tool_calls() {
+        // Exemple hypothétique d'un chunk avec tool_call delta
+        let json = r#"{
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_123",
+                                "type": "function",
+                                "function": {
+                                    "name": "sh",
+                                    "arguments": "{\"command\": \"ls\"}"
+                                }
+                            }
+                        ]
+                    },
+                    "index": 0
+                }
+            ]
+        }"#;
+        let chunk: ChatChunk = serde_json::from_str(json).unwrap();
+        assert_eq!(chunk.choices.len(), 1);
+        let tool_calls = chunk.choices[0].delta.tool_calls.as_ref().unwrap();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].index, Some(0));
+        assert_eq!(tool_calls[0].id.as_ref(), Some(&"call_123".to_string()));
+        assert_eq!(
+            tool_calls[0].call_type.as_ref(),
+            Some(&"function".to_string())
+        );
+        let function = tool_calls[0].function.as_ref().unwrap();
+        assert_eq!(function.name.as_ref(), Some(&"sh".to_string()));
+        assert_eq!(
+            function.arguments.as_ref(),
+            Some(&"{\"command\": \"ls\"}".to_string())
+        );
     }
 }

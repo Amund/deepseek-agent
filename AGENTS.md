@@ -7,9 +7,7 @@ Documentation pour les agents IA reprenant le projet. Ce fichier contient le con
 **Nom** : deepseek-agent  
 **Langage** : Rust  
 **Objectif** : Un agent CLI minimal utilisant l'API DeepSeek avec un seul outil - l'exécution de commandes shell (`sh`).  
-**Philosophie** : Léger, sans persistance (tout en mémoire), destiné à tourner dans un conteneur Docker (optionnel).
-
-**État actuel** : ✅ **Fonctionnel (basique)** - Projet compilable et exécutable avec une clé API DeepSeek.
+**Philosophie** : Léger, sans persistance (tout en mémoire), destiné à tourner dans un conteneur Docker, donc sans sandboxing supplémentaire pour les commandes exécutées.
 
 ## 📁 Structure du Projet (mise à jour)
 
@@ -19,7 +17,6 @@ deepseek-agent/
 │   └── main.rs            # Code principal
 ├── Cargo.toml             # Configuration Rust
 ├── README.md              # Documentation complétée
-├── TODO.md                # Liste des tâches mise à jour
 ├── AGENTS.md              # Ce fichier
 ├── env.example            # Template de configuration
 ├── .gitignore             # Fichiers ignorés
@@ -53,12 +50,12 @@ deepseek-agent/
 5. **✅ Gestion d'erreurs avancée** - Retries avec backoff exponentiel, timeout shell, messages d'erreur améliorés
 6. **✅ Warnings nettoyés** - Import inutilisé `VecDeque` supprimé, champ `finish_reason` supprimé
 7. **✅ Chargement automatique des fichiers de contexte** - AGENTS.md et README.md chargés automatiquement au démarrage (configurable via `DEEPSEEK_AGENT_SKIP_CONTEXT_FILES`)
+8. **✅ Streaming des réponses** - Implémentation du streaming SSE avec gestion de buffer pour les chunks fragmentés, configurable via `DEEPSEEK_AGENT_STREAM`
 
 ## 🛠️ Décisions Techniques Prises
 
 ### 1. Architecture
 - **Pas de Docker pour le moment** : L'utilisateur préfère compiler et exécuter en local
-- **Structure simple** : Garder le code monolithique pour l'instant, pas besoin de modules séparés
 - **Priorité** : Rendre le projet compilable avant toute optimisation
 
 ## 📋 État d'Avancement (mise à jour)
@@ -73,35 +70,17 @@ deepseek-agent/
 - [x] Mise à jour complète de README.md avec documentation détaillée
 - [x] Nettoyage des warnings (imports inutilisés supprimés)
 - [x] Tests de compilation réussis (`cargo check`, `cargo build --release`)
-
-### 🔄 Tâches en Cours
 - [x] Chargement automatique des fichiers AGENTS.md et README.md en début de discussion, si les fichiers sont présents
 
+### 🔄 Tâches en Cours
+- [x] Streaming des réponses (implémenté avec gestion buffer et correction du parsing)
+
 ### 📋 Amélioration possibles
-- Implémenter le streaming des réponses
 - Touche "Echap" pour stopper un traitement en cours
 - Améliorer l'interface utilisateur (historique de commandes, coloration)
 - Ajouter des tests unitaires et d'intégration
 - Documenter l'API interne et les décisions techniques
-
-## 🔧 Dépendances Rust (implémentées dans Cargo.toml)
-
-```toml
-[dependencies]
-reqwest = { version = "0.12", features = ["json"] }
-tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "process"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-rustyline = "12.0"
-
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1
-strip = true
-```
-
-**Statut** : Dépendances exactes et profil release optimisé configurés.
+- Tests unitaires pour le streaming des tool_calls
 
 ## 🚀 Commandes Utiles
 
@@ -145,23 +124,19 @@ cargo test
 - Vérifier que `rustyline` fonctionne dans tous les environnements
 - Tester les appels API réels avec une clé valide
 
-### Questions à résoudre
-1. ✅ **Timeouts des commandes shell résolu** - Via `DEEPSEEK_AGENT_SHELL_TIMEOUT_MS` et `tokio::time::timeout`
-2. **Faut-il un système de logs ?** - Mode debug via `DEEPSEEK_AGENT_DEBUG` existe, mais système de logs complet?
-3. **Comment valider la syntaxe des commandes shell ?** - Validation avancée des guillemets, syntaxe, échappements (à implémenter)
-
 ## 🔄 Dernière Mise à Jour
 
-**Date** : 2026-03-15  
+**Date** : 2026-03-17  
 **Agent** : Assistant IA  
-**Contexte** : Implémentation du chargement automatique des fichiers de contexte (AGENTS.md et README.md) au démarrage de l'agent. Les fichiers sont chargés et ajoutés au prompt système, avec logs en mode debug et option de désactivation via `DEEPSEEK_AGENT_SKIP_CONTEXT_FILES`.
+**Contexte** : Correction de l'erreur de parsing "missing field `name`" pour les réponses streaming. Implémentation de structures de désérialisation optionnelles pour les tool_calls streaming (`ToolCallDelta`, `FunctionCallDelta`). Ajout d'un système d'accumulation pour construire les tool_calls complets. Le streaming est maintenant désactivé par défaut (configurable via `DEEPSEEK_AGENT_STREAM`).
 
 **Prochaines étapes** : 
-1. Ajouter des tests unitaires pour les fonctions critiques
-2. Améliorer l'interface utilisateur (historique de commandes, coloration syntaxique)
-3. Implémenter le streaming des réponses
+1. Améliorer la gestion du streaming des tool_calls (tests supplémentaires)
+2. Ajouter des tests unitaires pour les fonctions critiques
+3. Améliorer l'interface utilisateur (historique de commandes, coloration syntaxique)
+4. Ajouter une touche "Echap" pour stopper un traitement en cours
 
-**État du projet** : ✅ **Fonctionnel (très avancé)** - Prêt pour une utilisation en production avec gestion d'erreurs robuste, configuration complète et contexte automatique.
+**État du projet** : ✅ **Fonctionnel (correction streaming)** - Prêt pour une utilisation en production avec streaming optionnel, gestion d'erreurs robuste, et configuration complète.
 
 ---
 

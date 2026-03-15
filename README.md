@@ -216,7 +216,3 @@ Vérifiez votre connexion internet et la validité de votre clé API.
 ## 📄 Licence
 
 MIT
-
-## 🤝 Contribution
-
-Les contributions sont les bienvenues ! Veuillez consulter le fichier TODO.md pour les tâches en cours.
