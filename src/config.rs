@@ -75,7 +75,9 @@ impl Config {
             let mut context_parts = Vec::new();
 
             // Charger AGENTS.md s'il existe
-            if let Some(agents_content) = load_file_if_exists("AGENTS.md", Some(MAX_CONTEXT_FILE_SIZE)) {
+            if let Some(agents_content) =
+                load_file_if_exists("AGENTS.md", Some(MAX_CONTEXT_FILE_SIZE))
+            {
                 if debug {
                     println!(
                         "[Debug] Fichier AGENTS.md chargé ({} caractères)",
@@ -91,7 +93,9 @@ impl Config {
             }
 
             // Charger README.md s'il existe
-            if let Some(readme_content) = load_file_if_exists("README.md", Some(MAX_CONTEXT_FILE_SIZE)) {
+            if let Some(readme_content) =
+                load_file_if_exists("README.md", Some(MAX_CONTEXT_FILE_SIZE))
+            {
                 if debug {
                     println!(
                         "[Debug] Fichier README.md chargé ({} caractères)",
@@ -104,6 +108,29 @@ impl Config {
                 ));
             } else if debug {
                 println!("[Debug] Fichier README.md non trouvu ou erreur de lecture");
+            }
+
+            // Charger CONTINUE.md s'il existe et le supprimer après lecture
+            if let Some(continue_content) =
+                load_file_if_exists("CONTINUE.md", Some(MAX_CONTEXT_FILE_SIZE))
+            {
+                if debug {
+                    println!(
+                        "[Debug] Fichier CONTINUE.md chargé ({} caractères)",
+                        continue_content.len()
+                    );
+                }
+                context_parts.push(format!(
+                    "## Tâche en cours (CONTINUE.md)\n\n{}\n",
+                    continue_content
+                ));
+                // Supprimer le fichier après lecture
+                let _ = std::fs::remove_file("CONTINUE.md");
+                if debug {
+                    println!("[Debug] Fichier CONTINUE.md supprimé");
+                }
+            } else if debug {
+                println!("[Debug] Fichier CONTINUE.md non trouvé ou erreur de lecture");
             }
 
             if !context_parts.is_empty() {

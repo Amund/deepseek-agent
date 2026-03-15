@@ -51,6 +51,7 @@ deepseek-agent/
 6. **✅ Warnings nettoyés** - Import inutilisé `VecDeque` supprimé, champ `finish_reason` supprimé
 7. **✅ Chargement automatique des fichiers de contexte** - AGENTS.md et README.md chargés automatiquement au démarrage (configurable via `DEEPSEEK_AGENT_SKIP_CONTEXT_FILES`)
 8. **✅ Streaming des réponses** - Implémentation du streaming SSE avec gestion de buffer pour les chunks fragmentés, configurable via `DEEPSEEK_AGENT_STREAM`
+9. **✅ Gestion des tokens avec redémarrage de session** - Lorsqu'il reste moins de 4000 tokens disponibles, la session actuelle est stoppée, un fichier CONTINUE.md est créé avec un résumé de la tâche en cours, et une nouvelle session est automatiquement relancée avec le contexte des fichiers AGENTS.md, README.md et CONTINUE.md. Le fichier CONTINUE.md est supprimé après lecture. Cette approche remplace le nettoyage optimisé du contexte.
 
 ## 🛠️ Décisions Techniques Prises
 
@@ -71,9 +72,8 @@ deepseek-agent/
 - [x] Nettoyage des warnings (imports inutilisés supprimés)
 - [x] Tests de compilation réussis (`cargo check`, `cargo build --release`)
 - [x] Chargement automatique des fichiers AGENTS.md et README.md en début de discussion, si les fichiers sont présents
-
-### 🔄 Tâches en Cours
 - [x] Streaming des réponses (implémenté avec gestion buffer et correction du parsing)
+- [x] Gestion des tokens avec redémarrage de session (seuil de 4000 tokens)
 
 ### 📋 Amélioration possibles
 - Touche "Echap" pour stopper un traitement en cours
@@ -126,9 +126,9 @@ cargo test
 
 ## 🔄 Dernière Mise à Jour
 
-**Date** : 2026-03-17  
+**Date** : 2026-03-18  
 **Agent** : Assistant IA  
-**Contexte** : Correction de l'erreur de parsing "missing field `name`" pour les réponses streaming. Implémentation de structures de désérialisation optionnelles pour les tool_calls streaming (`ToolCallDelta`, `FunctionCallDelta`). Ajout d'un système d'accumulation pour construire les tool_calls complets. Le streaming est maintenant désactivé par défaut (configurable via `DEEPSEEK_AGENT_STREAM`).
+**Contexte** : Implémentation de la gestion des tokens avec redémarrage de session. Lorsqu'il reste moins de 4000 tokens disponibles, la session actuelle est stoppée, un fichier CONTINUE.md est créé avec un résumé de la tâche en cours, et une nouvelle session est automatiquement relancée avec le contexte des fichiers AGENTS.md, README.md et CONTINUE.md. Le fichier CONTINUE.md est supprimé après lecture. Le nettoyage optimisé du contexte a été désactivé.
 
 **Prochaines étapes** : 
 1. Améliorer la gestion du streaming des tool_calls (tests supplémentaires)
@@ -136,7 +136,7 @@ cargo test
 3. Améliorer l'interface utilisateur (historique de commandes, coloration syntaxique)
 4. Ajouter une touche "Echap" pour stopper un traitement en cours
 
-**État du projet** : ✅ **Fonctionnel (correction streaming)** - Prêt pour une utilisation en production avec streaming optionnel, gestion d'erreurs robuste, et configuration complète.
+**État du projet** : ✅ **Fonctionnel (redémarrage session)** - Prêt pour une utilisation en production avec gestion automatique des tokens, streaming optionnel, gestion d'erreurs robuste, et configuration complète.
 
 ---
 

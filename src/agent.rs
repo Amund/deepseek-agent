@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use futures::StreamExt;
 use reqwest::Client;
 use rustyline;
@@ -7,23 +6,38 @@ use std::io::Write;
 use tokio::time::{sleep, Duration};
 
 use crate::api::*;
-use crate::config::{DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY_MS, DEFAULT_MAX_RETRY_DELAY_MS};
+use crate::config::{DEFAULT_MAX_RETRIES, DEFAULT_MAX_RETRY_DELAY_MS, DEFAULT_RETRY_DELAY_MS};
 use crate::security::Security;
 use crate::shell::ShellExecutor;
 use crate::token_management::{estimate_message_tokens, estimate_tokens};
+
+// Erreur personnalisée pour indiquer qu'il faut redémarrer la session
+#[derive(Debug)]
+pub struct RestartSessionError {
+    message: String,
+}
+
+impl std::fmt::Display for RestartSessionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for RestartSessionError {}
 
 pub struct Agent {
     client: Client,
     api_key: String,
     model: String,
     system_prompt: Option<String>,
-    messages: Vec<Message>,              // <-- historique en mémoire
-    total_tokens: u32,                   // Total des tokens estimés dans l'historique
-    security: Security,                  // Gestion de la sécurité
-    shell_executor: ShellExecutor,       // Exécution shell
+    messages: Vec<Message>,        // <-- historique en mémoire
+    total_tokens: u32,             // Total des tokens estimés dans l'historique
+    security: Security,            // Gestion de la sécurité
+    shell_executor: ShellExecutor, // Exécution shell
+    #[allow(dead_code)]
     max_history_messages: Option<usize>, // limite de messages (optionnel)
-    max_context_tokens: Option<u32>,     // limite de tokens (optionnel, prioritaire)
-    debug: bool,                         // mode debug
+    max_context_tokens: Option<u32>, // limite de tokens (optionnel, prioritaire)
+    debug: bool,                   // mode debug
     max_retries: u32,
     retry_delay_ms: u64,
     max_retry_delay_ms: u64,
@@ -103,12 +117,20 @@ impl Agent {
                 token_count: None,
             });
 
+            // Vérifier si la session doit être redémarrée
+            self.check_and_restart_if_needed()
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+
             // Appel API
             let response = self.call_deepseek().await?;
 
             if let Some(choice) = response.choices.into_iter().next() {
                 let msg = choice.message;
                 self.add_message(msg.clone());
+
+                // Vérifier si la session doit être redémarrée
+                self.check_and_restart_if_needed()
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
 
                 // Si l'assistant demande un outil
                 if let Some(tool_calls) = msg.tool_calls {
@@ -153,6 +175,10 @@ impl Agent {
                         self.add_message(result.clone());
                     }
 
+                    // Vérifier si la session doit être redémarrée
+                    self.check_and_restart_if_needed()
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+
                     // Si au moins un résultat a été généré, faire un appel API final
                     if !tool_results.is_empty() {
                         let final_response = self.call_deepseek().await?;
@@ -160,6 +186,10 @@ impl Agent {
                             let final_msg = final_choice.message;
                             println!("Agent: {}", final_msg.content);
                             self.add_message(final_msg);
+
+                            // Vérifier si la session doit être redémarrée
+                            self.check_and_restart_if_needed()
+                                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
                         }
                     }
                 } else {
@@ -584,7 +614,6 @@ impl Agent {
         }
     }
 
-
     // Valide une commande shell par rapport aux listes blanche/noire et règles de sécurité
 
     // Met à jour l'estimation de tokens pour un message
@@ -618,11 +647,12 @@ impl Agent {
 
         self.messages.push(message);
 
-        // Appliquer les limites
-        self.trim_to_limits();
+        // Appliquer les limites - DÉSACTIVÉ (on redémarre la session quand il reste moins de 4000 tokens)
+        // self.trim_to_limits();
     }
 
     // Supprime un bloc de messages et met à jour le compteur de tokens
+    #[allow(dead_code)]
     fn remove_messages(&mut self, range: std::ops::Range<usize>) {
         let removed_tokens: u32 = self.messages[range.clone()]
             .iter()
@@ -641,43 +671,24 @@ impl Agent {
     }
 
     // Applique toutes les limites (messages et tokens)
+    #[allow(dead_code)]
     fn trim_to_limits(&mut self) {
-        let mut needs_trimming = false;
-
-        // Vérifier la limite de messages
-        if let Some(max_messages) = self.max_history_messages {
-            if self.messages.len() > max_messages {
-                if self.debug {
-                    println!(
-                        "[Debug] Exceeded message limit: {} > {}",
-                        self.messages.len(),
-                        max_messages
-                    );
-                }
-                needs_trimming = true;
+        // DÉSACTIVÉ: le nettoyage automatique est remplacé par un redémarrage de session
+        // lorsque il reste moins de 4000 tokens disponibles.
+        if self.debug {
+            if let Some(max_tokens) = self.max_context_tokens {
+                let remaining = max_tokens.saturating_sub(self.total_tokens);
+                println!(
+                    "[Debug] Tokens restants: {} (limite: {}), redémarrage si <= 4000",
+                    remaining, max_tokens
+                );
             }
-        }
-
-        // Vérifier la limite de tokens
-        if let Some(max_tokens) = self.max_context_tokens {
-            if self.total_tokens > max_tokens {
-                if self.debug {
-                    println!(
-                        "[Debug] Exceeded token limit: {} > {}",
-                        self.total_tokens, max_tokens
-                    );
-                }
-                needs_trimming = true;
-            }
-        }
-
-        if needs_trimming {
-            self.trim_history_smart();
         }
     }
 
     // Tronque l'historique de manière intelligente pour optimiser le cache KV
     // Prend en compte à la fois les limites de messages et de tokens
+    #[allow(dead_code)]
     fn trim_history_smart(&mut self) {
         // Rien à faire si pas de limites
         if self.max_history_messages.is_none() && self.max_context_tokens.is_none() {
@@ -881,6 +892,7 @@ impl Agent {
     }
 
     // Trouve une meilleure frontière pour la suppression (optimisation cache)
+    #[allow(dead_code)]
     fn find_better_boundary(&self, start: usize, end: usize) -> usize {
         if end >= self.messages.len() {
             return self.messages.len();
@@ -891,7 +903,7 @@ impl Agent {
 
         // Chercher vers l'avant depuis end
         for i in end..self.messages.len() {
-            if i > 0 && i - 1 >= start {
+                            if i > start {
                 let prev = &self.messages[i - 1];
                 // Bonne frontière : après un assistant sans tool_calls
                 if prev.role == "assistant" && prev.tool_calls.is_none() {
@@ -920,5 +932,93 @@ impl Agent {
         // Retourner la position originale
         end
     }
-}
 
+    // Vérifie si la session doit être redémarrée (reste moins de 4000 tokens disponibles)
+    fn should_restart_session(&self) -> bool {
+        if let Some(max_tokens) = self.max_context_tokens {
+            let remaining_tokens = max_tokens.saturating_sub(self.total_tokens);
+            remaining_tokens <= 4000
+        } else {
+            false
+        }
+    }
+
+    // Crée le fichier CONTINUE.md avec un résumé des derniers messages
+    fn create_continue_file(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let mut content = String::new();
+        content.push_str("# Tâche en cours\n\n");
+
+        // Ajouter les 5 derniers messages (sauf système) pour contexte
+        let start_idx = if self.messages.len() > 5 {
+            self.messages.len() - 5
+        } else {
+            0
+        };
+
+        for msg in &self.messages[start_idx..] {
+            if msg.role == "system" {
+                continue;
+            }
+            match msg.role.as_str() {
+                "user" => {
+                    content.push_str(&format!("## User\n\n{}\n\n", msg.content));
+                }
+                "assistant" => {
+                    if let Some(tool_calls) = &msg.tool_calls {
+                        for tool_call in tool_calls {
+                            if tool_call.function.name == "sh" {
+                                content.push_str(&format!(
+                                    "## Assistant (commande shell)\n\n```bash\n{}\n```\n\n",
+                                    tool_call.function.arguments
+                                ));
+                            } else {
+                                content.push_str(&format!("## Assistant\n\n{}\n\n", msg.content));
+                            }
+                        }
+                    } else {
+                        content.push_str(&format!("## Assistant\n\n{}\n\n", msg.content));
+                    }
+                }
+                "tool" => {
+                    content.push_str(&format!(
+                        "## Résultat shell\n\n```\n{}\n```\n\n",
+                        msg.content
+                    ));
+                }
+                _ => {}
+            }
+        }
+
+        content.push_str("\n## Tâches suivantes suggérées\n\n- Continuer la conversation\n- Terminer les tâches en cours\n");
+
+        std::fs::write("CONTINUE.md", content)?;
+
+        if self.debug {
+            println!("[Debug] Fichier CONTINUE.md créé");
+        }
+
+        Ok(())
+    }
+
+    // Vérifie et redémarre la session si nécessaire
+    fn check_and_restart_if_needed(&self) -> Result<(), RestartSessionError> {
+        if self.should_restart_session() {
+            if self.debug {
+                println!("[Debug] Restart session nécessaire (reste moins de 4000 tokens)");
+            }
+
+            // Créer le fichier CONTINUE.md
+            if let Err(e) = self.create_continue_file() {
+                return Err(RestartSessionError {
+                    message: format!("Erreur lors de la création du fichier CONTINUE.md: {}", e),
+                });
+            }
+
+            Err(RestartSessionError {
+                message: "Session redémarrée pour gérer la limite de tokens".to_string(),
+            })
+        } else {
+            Ok(())
+        }
+    }
+}
