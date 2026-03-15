@@ -3,6 +3,9 @@ services:
     container_name: rust-ds
     image: rust:slim
     restart: unless-stopped
+    environment:
+      - DEEPSEEK_API_KEY=$DEEPSEEK_API_KEY
     volumes:
       - .:/app
     working_dir: /app
+    command: ["sleep", "infinity"]

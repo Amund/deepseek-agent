@@ -16,14 +16,14 @@ Documentation pour les agents IA reprenant le projet. Ce fichier contient le con
 ```
 deepseek-agent/
 ├── src/
-│   └── main.rs              # Code principal
-├── Cargo.toml              # Configuration Rust (créé)
-├── README.md               # Documentation complétée
-├── TODO.md                 # Liste des tâches mise à jour
-├── AGENTS.md               # Ce fichier
-├── env.example             # Template de configuration (créé)
-├── .gitignore             # Fichiers ignorés (créé)
-└── examples/              # Exemples d'utilisation (créé)
+│   └── main.rs            # Code principal
+├── Cargo.toml             # Configuration Rust
+├── README.md              # Documentation complétée
+├── TODO.md                # Liste des tâches mise à jour
+├── AGENTS.md              # Ce fichier
+├── env.example            # Template de configuration
+├── .gitignore             # Fichiers ignorés
+└── examples/              # Exemples d'utilisation
     └── basic_usage.md     # Exemples détaillés
 ```
 
@@ -52,6 +52,7 @@ deepseek-agent/
    → Limite configurable de messages/tokens, conservation du message système, optimisation du cache KV
 5. **✅ Gestion d'erreurs avancée** - Retries avec backoff exponentiel, timeout shell, messages d'erreur améliorés
 6. **✅ Warnings nettoyés** - Import inutilisé `VecDeque` supprimé, champ `finish_reason` supprimé
+7. **✅ Chargement automatique des fichiers de contexte** - AGENTS.md et README.md chargés automatiquement au démarrage (configurable via `DEEPSEEK_AGENT_SKIP_CONTEXT_FILES`)
 
 ## 🛠️ Décisions Techniques Prises
 
@@ -60,28 +61,10 @@ deepseek-agent/
 - **Structure simple** : Garder le code monolithique pour l'instant, pas besoin de modules séparés
 - **Priorité** : Rendre le projet compilable avant toute optimisation
 
-### 2. Fichiers créés ✅
-1. **✅ Cargo.toml** - Configuration Rust avec dépendances exactes
-2. **✅ env.example** - Template de variables d'environnement (`.env.example` bloqué pour sécurité)
-3. **✅ .gitignore** - Pour Rust/Docker
-4. **✅ examples/** - Dossier avec exemples d'utilisation (`basic_usage.md`)
-
-### 3. Documentation complétée ✅
-- **✅ README.md** - Documentation complète avec installation, utilisation, exemples
-- **✅ TODO.md** - Liste des tâches mise à jour avec état d'avancement
-- **✅ AGENTS.md** - Ce fichier, mis à jour régulièrement
-
-### 3. Améliorations Planifiées
-1. Correction de la boucle `tool_calls` (priorité haute)
-2. Renforcement de la sécurité de la liste blanche
-3. Limite d'historique (fenêtre glissante)
-4. Meilleure gestion d'erreurs avec retry
-
 ## 📋 État d'Avancement (mise à jour)
 
 ### ✅ Tâches Complétées
 - [x] Analyse du code existant et identification des problèmes
-- [x] Création de TODO.md avec liste détaillée des tâches
 - [x] Création de AGENTS.md pour documentation des agents
 - [x] Création de Cargo.toml avec dépendances exactes
 - [x] Création de env.example pour configuration
@@ -92,12 +75,14 @@ deepseek-agent/
 - [x] Tests de compilation réussis (`cargo check`, `cargo build --release`)
 
 ### 🔄 Tâches en Cours
-- [ ] Validation avancée des commandes (guillemets, syntaxe shell, échappements)
-- [ ] Implémentation de tests unitaires
-- [ ] Amélioration de l'interface utilisateur (historique de commandes, coloration syntaxique)
+- [x] Chargement automatique des fichiers AGENTS.md et README.md en début de discussion, si les fichiers sont présents
 
-### 📋 Tâches Restantes
-Voir TODO.md pour la liste complète et priorisée
+### 📋 Amélioration possibles
+- Implémenter le streaming des réponses
+- Touche "Echap" pour stopper un traitement en cours
+- Améliorer l'interface utilisateur (historique de commandes, coloration)
+- Ajouter des tests unitaires et d'intégration
+- Documenter l'API interne et les décisions techniques
 
 ## 🔧 Dépendances Rust (implémentées dans Cargo.toml)
 
@@ -120,7 +105,7 @@ strip = true
 
 ## 🚀 Commandes Utiles
 
-### Pour tester la compilation (une fois Cargo.toml créé)
+### Pour tester la compilation
 ```bash
 # Vérifier la syntaxe
 cargo check
@@ -147,30 +132,6 @@ cargo clippy
 cargo test
 ```
 
-## 🎯 Prochaines Actions Recommandées
-
-### ✅ Phase 1 : Rendre le projet compilable - COMPLÉTÉ
-1. **✅ Créer Cargo.toml** avec les dépendances exactes
-2. **✅ Tester la compilation** avec `cargo check` et `cargo build --release`
-3. **✅ Créer env.example** avec `DEEPSEEK_API_KEY` (`.env.example` bloqué pour sécurité)
-
-### ✅ Phase 2 : Corrections essentielles - COMPLÉTÉ
-4. **✅ Corriger la boucle tool_calls** - Optimiser les appels API (un seul appel final)
-5. **✅ Renforcer la sécurité** - Validation étendue, blacklist sur tous les tokens, patterns dangereux détectés
-6. **✅ Ajouter limite d'historique** - Fenêtre glissante configurable avec optimisation du cache KV
-7. **✅ Implémenter la gestion d'erreurs avancée** - Retries avec backoff exponentiel, timeout shell
-
-### ✅ Phase 3 : Documentation et configuration - COMPLÉTÉ
-8. **✅ Compléter le README.md** avec section utilisation, exemples, dépannage, documentation avancée
-9. **✅ Ajouter des exemples** d'interaction dans `examples/basic_usage.md`
-10. **✅ Configuration étendue** - Variables d'environnement pour retries, timeouts, calibration tokens
-11. **✅ Calibration automatique** - Estimation des tokens ajustée par les retours API
-
-### 🔄 Phase 4 : Améliorations avancées - EN COURS
-12. **Validation avancée des commandes** - Guillemets, syntaxe shell, échappements
-13. **Tests unitaires et d'intégration** - Validation des fonctionnalités critiques
-14. **Interface utilisateur améliorée** - Historique de commandes, coloration syntaxique
-
 ## 💡 Notes pour les Agents Futurs
 
 ### À garder en tête
@@ -191,26 +152,16 @@ cargo test
 
 ## 🔄 Dernière Mise à Jour
 
-**Date** : 2025-03-15  
+**Date** : 2026-03-15  
 **Agent** : Assistant IA  
-**Contexte** : Implémentation de la gestion d'erreurs avancée avec retries et timeouts  
-**Réalisations récentes** :
-1. ✅ **Adaptation des limites de tokens** : Limites dynamiques selon le modèle (128K pour deepseek-chat/reasoner, 32K pour les autres)
-2. ✅ **Support étendu des variables d'environnement** : system_prompt, blacklist, model, max_history_messages, max_context_tokens
-3. ✅ **Optimisation des appels API** : Correction de la boucle tool_calls (un seul appel final)
-4. ✅ **Sécurité renforcée** : Validation étendue, patterns dangereux, blacklist sur tous les tokens
-5. ✅ **Gestion d'historique** : Limite configurable avec fenêtre glissante et optimisation du cache KV
-6. ✅ **Calibration des tokens** - Estimation automatique ajustée par les retours API
-7. ✅ **Documentation mise à jour** : TODO.md, README.md et exemples complets
-8. ✅ **Gestion d'erreurs avancée** : Retries avec backoff exponentiel, timeout shell, messages d'erreur améliorés
-9. ✅ **Variables d'environnement étendues** : `DEEPSEEK_AGENT_MAX_RETRIES`, `DEEPSEEK_AGENT_RETRY_DELAY_MS`, `DEEPSEEK_AGENT_MAX_RETRY_DELAY_MS`, `DEEPSEEK_AGENT_SHELL_TIMEOUT_MS`
+**Contexte** : Implémentation du chargement automatique des fichiers de contexte (AGENTS.md et README.md) au démarrage de l'agent. Les fichiers sont chargés et ajoutés au prompt système, avec logs en mode debug et option de désactivation via `DEEPSEEK_AGENT_SKIP_CONTEXT_FILES`.
 
 **Prochaines étapes** : 
-1. Implémenter la validation avancée des commandes (guillemets, syntaxe shell, échappements)
-2. Ajouter des tests unitaires pour les fonctions critiques
-3. Améliorer l'interface utilisateur (historique de commandes, coloration syntaxique)
+1. Ajouter des tests unitaires pour les fonctions critiques
+2. Améliorer l'interface utilisateur (historique de commandes, coloration syntaxique)
+3. Implémenter le streaming des réponses
 
-**État du projet** : ✅ **Fonctionnel (très avancé)** - Prêt pour une utilisation en production avec gestion d'erreurs robuste et configuration complète.
+**État du projet** : ✅ **Fonctionnel (très avancé)** - Prêt pour une utilisation en production avec gestion d'erreurs robuste, configuration complète et contexte automatique.
 
 ---
 

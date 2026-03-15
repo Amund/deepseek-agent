@@ -139,6 +139,7 @@ let blacklist = Some(vec![
 | `DEEPSEEK_AGENT_RETRY_DELAY_MS` | Délai initial entre les tentatives (ms) | `1000` |
 | `DEEPSEEK_AGENT_MAX_RETRY_DELAY_MS` | Délai maximum entre les tentatives (ms) | `30000` |
 | `DEEPSEEK_AGENT_SHELL_TIMEOUT_MS` | Timeout pour l'exécution des commandes shell (ms) | Aucun |
+| `DEEPSEEK_AGENT_SKIP_CONTEXT_FILES` | Désactiver le chargement automatique des fichiers AGENTS.md et README.md | Désactivé (fichiers chargés par défaut) |
 
 **Calibration automatique** : L'agent estime automatiquement le nombre de tokens utilisés et ajuste ses estimations grâce aux données renvoyées par l'API DeepSeek. Cela permet une gestion précise du contexte et une optimisation du cache KV de DeepSeek.
 
@@ -156,6 +157,7 @@ export DEEPSEEK_AGENT_MAX_RETRIES=3              # Nombre maximum de tentatives 
 export DEEPSEEK_AGENT_RETRY_DELAY_MS=1000        # Délai initial entre les tentatives (ms)
 export DEEPSEEK_AGENT_MAX_RETRY_DELAY_MS=30000   # Délai maximum entre les tentatives (ms)
 export DEEPSEEK_AGENT_SHELL_TIMEOUT_MS=5000      # Timeout pour l'exécution des commandes shell (ms)
+export DEEPSEEK_AGENT_SKIP_CONTEXT_FILES=1       # Désactiver le chargement automatique des fichiers de contexte
 ```
 
 ## 🔧 Développement
@@ -167,7 +169,6 @@ deepseek-agent/
 ├── src/main.rs          # Code source principal
 ├── Cargo.toml          # Configuration Rust
 ├── README.md           # Documentation
-├── TODO.md             # Liste des tâches
 ├── AGENTS.md           # Documentation pour les agents IA
 ├── env.example         # Template de configuration
 └── .gitignore         # Fichiers à ignorer
@@ -211,16 +212,6 @@ rustc --version
 
 ### L'agent ne répond pas
 Vérifiez votre connexion internet et la validité de votre clé API.
-
-## 🔮 Améliorations planifiées
-
-Consultez le fichier [TODO.md](TODO.md) pour la liste détaillée des améliorations planifiées, notamment :
-
-- [ ] Correction de la gestion des appels d'outils multiples
-- [ ] Renforcement de la sécurité de la liste blanche
-- [ ] Limitation de l'historique de conversation
-- [ ] Meilleure gestion des erreurs
-- [ ] Tests unitaires
 
 ## 📄 Licence
 
