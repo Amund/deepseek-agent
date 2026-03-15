@@ -24,6 +24,20 @@ deepseek-agent/
     └── basic_usage.md     # Exemples détaillés
 ```
 
+
+## 🏗️ Architecture Modulaire (Refactorisation)
+
+Le code a été refactorisé en modules spécialisés pour réduire la taille du fichier agent.rs (passé de 1163 à 217 lignes) :
+
+- **agent.rs** : Coordination générale, boucle interactive, traitement des tool_calls
+- **api_client.rs** : Appels HTTP avec retry et gestion du streaming
+- **history.rs** : Gestion de l'historique des messages, estimation des tokens, calibration
+- **session.rs** : Redémarrage de session et création du fichier CONTINUE.md
+- **streaming.rs** : Traitement des réponses streaming (ToolCallBuilder, parsing SSE)
+- **security.rs** et **shell.rs** : inchangés
+
+Cette séparation des responsabilités améliore la maintenabilité et permet des tests unitaires ciblés.
+
 ## 🔍 Analyse Technique
 
 ### Problèmes Identifiés (src/main.rs) - État actuel
@@ -74,6 +88,7 @@ deepseek-agent/
 - [x] Chargement automatique des fichiers AGENTS.md et README.md en début de discussion, si les fichiers sont présents
 - [x] Streaming des réponses (implémenté avec gestion buffer et correction du parsing)
 - [x] Gestion des tokens avec redémarrage de session (seuil de 4000 tokens)
+- [x] Refactorisation modulaire (agent.rs réduit à 217 lignes)
 
 ### 📋 Amélioration possibles
 - Touche "Echap" pour stopper un traitement en cours
@@ -126,17 +141,18 @@ cargo test
 
 ## 🔄 Dernière Mise à Jour
 
-**Date** : 2026-03-18  
+**Date** : 2026-03-19  
 **Agent** : Assistant IA  
-**Contexte** : Implémentation de la gestion des tokens avec redémarrage de session. Lorsqu'il reste moins de 4000 tokens disponibles, la session actuelle est stoppée, un fichier CONTINUE.md est créé avec un résumé de la tâche en cours, et une nouvelle session est automatiquement relancée avec le contexte des fichiers AGENTS.md, README.md et CONTINUE.md. Le fichier CONTINUE.md est supprimé après lecture. Le nettoyage optimisé du contexte a été désactivé.
+**Contexte** : Nettoyage des fonctions inutilisées dans history.rs (trim_to_limits, trim_history_smart, find_better_boundary, remove_messages) qui étaient désactivées depuis l'implémentation du redémarrage de session. Le code est maintenant plus léger et maintenable. La compilation passe sans erreur, avec seulement des warnings pour des champs non utilisés (max_history_messages, model).
 
 **Prochaines étapes** : 
-1. Améliorer la gestion du streaming des tool_calls (tests supplémentaires)
-2. Ajouter des tests unitaires pour les fonctions critiques
+1. ✅ Nettoyer les fonctions inutilisées dans history.rs (trimming désactivé)
+2. Ajouter des tests unitaires pour les nouveaux modules
 3. Améliorer l'interface utilisateur (historique de commandes, coloration syntaxique)
 4. Ajouter une touche "Echap" pour stopper un traitement en cours
+5. Supprimer le champ `max_history_messages` inutilisé (optionnel)
 
-**État du projet** : ✅ **Fonctionnel (redémarrage session)** - Prêt pour une utilisation en production avec gestion automatique des tokens, streaming optionnel, gestion d'erreurs robuste, et configuration complète.
+**État du projet** : ✅ **Fonctionnel (nettoyé)** - Architecture modulaire propre, fonctions inutilisées supprimées, prêt pour des extensions futures.
 
 ---
 

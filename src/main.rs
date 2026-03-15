@@ -1,16 +1,21 @@
 // Déclaration des modules
 mod agent;
 mod api;
+mod api_client;
 mod config;
+mod history;
 mod security;
+mod session;
 mod shell;
+mod streaming;
 mod token_management;
 
 // Imports
 use tokio;
 
-use crate::agent::{Agent, RestartSessionError};
+use crate::agent::Agent;
 use crate::config::Config;
+use crate::session::RestartSessionError;
 use crate::token_management::default_max_context_tokens_for_model;
 
 // ------------------ Main ------------------
