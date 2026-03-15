@@ -89,11 +89,13 @@ Cette séparation des responsabilités améliore la maintenabilité et permet de
 - [x] Streaming des réponses (implémenté avec gestion buffer et correction du parsing)
 - [x] Gestion des tokens avec redémarrage de session (seuil de 4000 tokens)
 - [x] Refactorisation modulaire (agent.rs réduit à 217 lignes)
+- [x] Interruption avec Ctrl+C pour arrêter un traitement en cours (streaming et commandes shell) et quitter l'application
+- [x] Interruption avec touche Échap pour arrêter le streaming de réponse
+- [x] Ctrl+C permet de quitter complètement l'application (en plus d'interrompre le traitement)
 
 ### 📋 Amélioration possibles
-- Touche "Echap" pour stopper un traitement en cours
-- Améliorer l'interface utilisateur (historique de commandes, coloration)
 - Ajouter des tests unitaires et d'intégration
+- Améliorer l'interface utilisateur (historique de commandes, coloration)
 - Documenter l'API interne et les décisions techniques
 - Tests unitaires pour le streaming des tool_calls
 
@@ -141,18 +143,17 @@ cargo test
 
 ## 🔄 Dernière Mise à Jour
 
-**Date** : 2026-03-19  
+**Date** : 2026-03-21  
 **Agent** : Assistant IA  
-**Contexte** : Nettoyage des fonctions inutilisées dans history.rs (trim_to_limits, trim_history_smart, find_better_boundary, remove_messages) qui étaient désactivées depuis l'implémentation du redémarrage de session. Le code est maintenant plus léger et maintenable. La compilation passe sans erreur, avec seulement des warnings pour des champs non utilisés (max_history_messages, model).
+**Contexte** : Modification du comportement de Ctrl+C pour permettre de quitter complètement l'application (en plus d'interrompre un traitement en cours). Maintenant, lorsque l'utilisateur appuie sur Ctrl+C à l'invite principale, l'agent se termine proprement. Le système vérifie l'interruption au début de chaque tour de boucle et gère également les interruptions pendant la lecture de l'entrée utilisateur (via rustyline). Les interruptions pendant le streaming et l'exécution de commandes shell restent fonctionnelles.
 
 **Prochaines étapes** : 
-1. ✅ Nettoyer les fonctions inutilisées dans history.rs (trimming désactivé)
-2. Ajouter des tests unitaires pour les nouveaux modules
-3. Améliorer l'interface utilisateur (historique de commandes, coloration syntaxique)
-4. Ajouter une touche "Echap" pour stopper un traitement en cours
-5. Supprimer le champ `max_history_messages` inutilisé (optionnel)
+1. Ajouter des tests unitaires pour les nouveaux modules
+2. Améliorer l'interface utilisateur (historique de commandes, coloration syntaxique)
+3. Supprimer le champ `max_history_messages` inutilisé (optionnel)
+4. Implémenter l'interruption pendant l'exécution de commandes shell (envoi de SIGINT au processus enfant)
 
-**État du projet** : ✅ **Fonctionnel (nettoyé)** - Architecture modulaire propre, fonctions inutilisées supprimées, prêt pour des extensions futures.
+**État du projet** : ✅ **Fonctionnel avec interruption complète** - Toutes les fonctionnalités de base sont opérationnelles, y compris la gestion des tokens, le streaming, le redémarrage de session et l'interruption utilisateur (Ctrl+C pour quitter l'application, Échap pour interrompre le streaming).
 
 ---
 

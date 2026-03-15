@@ -56,6 +56,9 @@ impl ApiClient {
                     // Vérifier le statut HTTP
                     if resp.status().is_success() {
                         if self.stream {
+                            if self.debug {
+                                println!("[Debug] Using streaming mode for API call");
+                            }
                             let stream_processor = StreamProcessor::new(self.debug);
                             match stream_processor.process_response(resp).await {
                                 Ok(response) => {

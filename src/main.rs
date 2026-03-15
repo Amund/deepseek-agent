@@ -4,14 +4,12 @@ mod api;
 mod api_client;
 mod config;
 mod history;
+mod interrupt;
 mod security;
 mod session;
 mod shell;
 mod streaming;
 mod token_management;
-
-// Imports
-use tokio;
 
 use crate::agent::Agent;
 use crate::config::Config;
@@ -23,6 +21,9 @@ use crate::token_management::default_max_context_tokens_for_model;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Charger la configuration depuis l'environnement
     let config = Config::from_env()?;
+
+    // Initialiser le gestionnaire d'interruption (Ctrl+C)
+    crate::interrupt::init_interrupt_handler();
 
     // Calculer la limite de tokens par défaut si non spécifiée
     let max_context_tokens = config

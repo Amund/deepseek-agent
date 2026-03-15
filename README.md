@@ -12,6 +12,7 @@ L'agent ne dispose que d'un seul outil : l'exécution de commandes shell (`sh`),
 - **Liste blanche optionnelle** des commandes autorisées, configurable directement dans le code (par sécurité, même dans Docker).
 - **Gestion complète des `tool_calls`** : l'agent peut appeler l'outil, recevoir le résultat, et poursuivre la conversation.
 - **Interface en ligne de commande interactive** simple (saisie utilisateur, affichage des réponses).
+- **Interruption avec Ctrl+C ou Échap** : permet d'arrêter un traitement en cours (streaming ou exécution de commande) et de retourner à l'invite utilisateur.
 
 ## 📋 Prérequis
 
@@ -66,6 +67,8 @@ Une fois lancé, l'agent affiche :
 Agent DeepSeek minimal (Docker). Tapez 'quit' pour sortir.
 >> 
 ```
+
+**Interruption** : Pendant qu'une réponse est générée (streaming) ou qu'une commande shell s'exécute, vous pouvez appuyer sur **Ctrl+C** ou **Échap** pour interrompre le traitement et retourner à l'invite `>>`.
 
 Vous pouvez alors :
 - Poser des questions en texte libre

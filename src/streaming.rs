@@ -1,7 +1,10 @@
 use crate::api::*;
+use crate::interrupt;
 use futures::StreamExt;
 use reqwest::Response;
 use std::io::Write;
+
+
 
 // Pour construire les tool_calls en streaming
 #[derive(Debug, Default)]
@@ -87,11 +90,15 @@ impl StreamProcessor {
         let mut accumulated_tool_calls: Vec<ToolCall> = Vec::new();
         let mut usage: Option<Usage> = None;
 
+
+
         // Lire le stream ligne par ligne
         let stream = resp.bytes_stream();
         tokio::pin!(stream);
         let mut buffer = String::new();
         let mut stream_done = false;
+        let mut interrupted = false;
+        let mut prefix_printed = false;
 
         while let Some(item) = stream.next().await {
             if stream_done {
@@ -132,8 +139,15 @@ impl StreamProcessor {
                                         let delta = choice.delta;
                                         if let Some(content) = delta.content {
                                             // Afficher le contenu au fur et à mesure
-                                            print!("{}", content);
-                                            std::io::stdout().flush().ok();
+                                            if !content.is_empty() {
+                                                if !prefix_printed {
+                                                    print!("Agent: ");
+                                                    std::io::stdout().flush().ok();
+                                                    prefix_printed = true;
+                                                }
+                                                print!("{}", content);
+                                                std::io::stdout().flush().ok();
+                                            }
                                             accumulated_message.content.push_str(&content);
                                         }
                                         if let Some(tool_calls) = delta.tool_calls {
@@ -187,8 +201,20 @@ impl StreamProcessor {
                     // On continue malgré les erreurs de chunk
                 }
             }
+            // Vérifier si l'utilisateur a demandé une interruption
+            if interrupt::check_interrupt() {
+                if self.debug {
+                    println!("[Debug] Interruption demandée par l'utilisateur");
+                }
+                interrupted = true;
+                break;
+            }
         }
-        println!(); // Nouvelle ligne après le streaming
+        if interrupted {
+            println!("\n[Interruption] Réponse interrompue par l'utilisateur.");
+        } else {
+            println!(); // Nouvelle ligne après le streaming
+        }
 
         // Si nous avons accumulé des tool_calls, les ajouter au message
         if !accumulated_tool_calls.is_empty() {

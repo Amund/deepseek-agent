@@ -184,11 +184,11 @@ impl Config {
             .ok()
             .and_then(|s| s.parse::<u64>().ok());
 
-        // Streaming des réponses (par défaut désactivé)
+        // Streaming des réponses (par défaut activé)
         let stream = env::var("DEEPSEEK_AGENT_STREAM")
             .ok()
-            .map(|s| s.parse::<bool>().unwrap_or(false))
-            .unwrap_or(false);
+            .map(|s| s.parse::<bool>().unwrap_or(true))
+            .unwrap_or(true);
 
         let debug = std::env::var("DEEPSEEK_AGENT_DEBUG").is_ok();
 

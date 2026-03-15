@@ -1,10 +1,12 @@
 use rustyline;
+use rustyline::error::ReadlineError;
 use serde_json;
 
 use crate::api::*;
 use crate::api_client::ApiClient;
 use crate::config::{DEFAULT_MAX_RETRIES, DEFAULT_MAX_RETRY_DELAY_MS, DEFAULT_RETRY_DELAY_MS};
 use crate::history::HistoryManager;
+use crate::interrupt;
 use crate::security::Security;
 use crate::session::{self, RestartSessionError};
 use crate::shell::ShellExecutor;
@@ -62,6 +64,16 @@ impl Agent {
         }
     }
 
+    fn print_assistant_message(&self, msg: &Message) {
+        if self.stream && !msg.content.is_empty() {
+            // Le contenu a déjà été affiché via streaming, on n'affiche que si c'était vide
+            // Mais on peut ajouter une nouvelle ligne si nécessaire
+            // Le streaming ajoute déjà une nouvelle ligne à la fin
+        } else if !msg.content.is_empty() {
+            println!("Agent: {}", msg.content);
+        }
+    }
+
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // Message système (personnalisable)
         let system_content = self.system_prompt.clone().unwrap_or_else(||
@@ -80,7 +92,29 @@ impl Agent {
         let mut stdin = rustyline::DefaultEditor::new()?;
 
         loop {
-            let user_input = stdin.readline(">> ")?;
+            // Vérifier si une interruption a été demandée (Ctrl+C ou Échap)
+            if interrupt::is_interrupt_requested() {
+                println!("\nInterruption détectée. Arrêt de l'agent.");
+                break;
+            }
+            // Réinitialiser le flag d'interruption après la vérification
+            interrupt::reset_interrupt();
+            
+            let user_input = match stdin.readline(">> ") {
+                Ok(line) => line,
+                Err(ReadlineError::Interrupted) => {
+                    // Ctrl+C pendant la lecture de ligne
+                    println!("\nInterruption. Arrêt de l'agent.");
+                    break;
+                }
+                Err(ReadlineError::Eof) => {
+                    // Ctrl+D (EOF)
+                    println!("\nFin du fichier. Arrêt.");
+                    break;
+                }
+                Err(err) => return Err(Box::new(err)),
+            };
+            
             if user_input == "quit" {
                 break;
             }
@@ -110,8 +144,22 @@ impl Agent {
                 // Si l'assistant demande un outil
                 if let Some(tool_calls) = msg.tool_calls {
                     let mut tool_results = Vec::new();
+                    let mut interrupted = false;
 
                     for tool_call in tool_calls {
+                        // Vérifier si l'utilisateur a demandé une interruption
+                        if interrupt::check_interrupt() {
+                            interrupted = true;
+                            // Ajouter un message d'interruption à l'historique
+                            self.history.add_message(Message {
+                                role: "system".into(),
+                                content: "Interruption demandée par l'utilisateur. Arrêt de l'exécution des commandes.".into(),
+                                tool_calls: None,
+                                tool_call_id: None,
+                                token_count: None,
+                            });
+                            break;
+                        }
                         if tool_call.function.name == "sh" {
                             // Extraire la commande des arguments JSON
                             let args: serde_json::Value =
@@ -152,12 +200,14 @@ impl Agent {
                     // Vérifier si la session doit être redémarrée
                     self.check_restart()?;
 
-                    // Si au moins un résultat a été généré, faire un appel API final
-                    if !tool_results.is_empty() {
+                    if interrupted {
+                        println!("[Interruption] Exécution des commandes interrompue.");
+                    } else if !tool_results.is_empty() {
+                        // Si au moins un résultat a été généré, faire un appel API final
                         let final_response = self.call_api().await?;
                         if let Some(final_choice) = final_response.choices.into_iter().next() {
                             let final_msg = final_choice.message;
-                            println!("Agent: {}", final_msg.content);
+                            self.print_assistant_message(&final_msg);
                             self.history.add_message(final_msg);
 
                             // Vérifier si la session doit être redémarrée
@@ -166,7 +216,7 @@ impl Agent {
                     }
                 } else {
                     // Réponse textuelle normale
-                    println!("Agent: {}", msg.content);
+                    self.print_assistant_message(&msg);
                 }
             }
         }
