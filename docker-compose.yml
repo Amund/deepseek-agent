@@ -7,5 +7,6 @@ services:
       - DEEPSEEK_API_KEY=$DEEPSEEK_API_KEY
     volumes:
       - .:/app
+      - .git:/app/.git:ro
     working_dir: /app
     command: ["sleep", "infinity"]
