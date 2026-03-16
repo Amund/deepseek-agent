@@ -66,12 +66,30 @@ Cette séparation des responsabilités améliore la maintenabilité et permet de
 7. **✅ Chargement automatique des fichiers de contexte** - AGENTS.md et README.md chargés automatiquement au démarrage (configurable via `DEEPSEEK_AGENT_SKIP_CONTEXT_FILES`)
 8. **✅ Streaming des réponses** - Implémentation du streaming SSE avec gestion de buffer pour les chunks fragmentés, configurable via `DEEPSEEK_AGENT_STREAM`
 9. **✅ Gestion des tokens avec redémarrage de session** - Lorsqu'il reste moins de 4000 tokens disponibles, la session actuelle est stoppée, un fichier CONTINUE.md est créé avec un résumé de la tâche en cours, et une nouvelle session est automatiquement relancée avec le contexte des fichiers AGENTS.md, README.md et CONTINUE.md. Le fichier CONTINUE.md est supprimé après lecture. Cette approche remplace le nettoyage optimisé du contexte.
+10. **✅ Correction du streaming des tool_calls** - Les arguments des tool_calls en streaming étaient mal accumulés (remplacement au lieu de concaténation). Correction de `ToolCallBuilder` pour concaténer les fragments d'arguments et validation des arguments non vides. Ajout de logs de débogage pour les erreurs de parsing JSON.
 
 ## 🛠️ Décisions Techniques Prises
 
 ### 1. Architecture
 - **Pas de Docker pour le moment** : L'utilisateur préfère compiler et exécuter en local
 - **Priorité** : Rendre le projet compilable avant toute optimisation
+
+## Documentation
+
+### API DeepSeek
+
+- Create Chat Completion : https://api-docs.deepseek.com/api/create-chat-completion
+- Lists Models : https://api-docs.deepseek.com/api/list-models
+- Get User Balance : https://api-docs.deepseek.com/api/get-user-balance
+
+### API Guides DeepSeek
+
+- Thinking Mode : https://api-docs.deepseek.com/guides/thinking_mode
+- Multi-round Conversation : https://api-docs.deepseek.com/guides/multi_round_chat
+- Chat Prefix Completion (Beta) : https://api-docs.deepseek.com/guides/chat_prefix_completion
+- JSON Output : https://api-docs.deepseek.com/guides/json_mode
+- Tool Calls : https://api-docs.deepseek.com/guides/tool_calls
+- Context Caching : https://api-docs.deepseek.com/guides/kv_cache
 
 ## 📋 État d'Avancement (mise à jour)
 
@@ -145,15 +163,16 @@ cargo test
 
 **Date** : 2026-03-21  
 **Agent** : Assistant IA  
-**Contexte** : Modification du comportement de Ctrl+C pour permettre de quitter complètement l'application (en plus d'interrompre un traitement en cours). Maintenant, lorsque l'utilisateur appuie sur Ctrl+C à l'invite principale, l'agent se termine proprement. Le système vérifie l'interruption au début de chaque tour de boucle et gère également les interruptions pendant la lecture de l'entrée utilisateur (via rustyline). Les interruptions pendant le streaming et l'exécution de commandes shell restent fonctionnelles.
+**Contexte** : Correction des bugs dans le streaming des tool_calls (concaténation des arguments, validation des arguments vides). Ajout de logs de débogage pour les réponses API. L'erreur "EOF while parsing a value" était due à des arguments vides ou à une réponse API malformée. Ces corrections devraient permettre aux appels d'outils de fonctionner correctement.
 
 **Prochaines étapes** : 
 1. Ajouter des tests unitaires pour les nouveaux modules
 2. Améliorer l'interface utilisateur (historique de commandes, coloration syntaxique)
 3. Supprimer le champ `max_history_messages` inutilisé (optionnel)
 4. Implémenter l'interruption pendant l'exécution de commandes shell (envoi de SIGINT au processus enfant)
+5. Tester l'appel d'outils avec une clé API valide
 
-**État du projet** : ✅ **Fonctionnel avec interruption complète** - Toutes les fonctionnalités de base sont opérationnelles, y compris la gestion des tokens, le streaming, le redémarrage de session et l'interruption utilisateur (Ctrl+C pour quitter l'application, Échap pour interrompre le streaming).
+**État du projet** : ✅ **Fonctionnel avec corrections** - Les fonctionnalités de base sont opérationnelles. Les bugs de streaming des tool_calls ont été corrigés. Des logs de débogage améliorés aident à diagnostiquer les erreurs d'API.
 
 ---
 

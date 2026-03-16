@@ -13,7 +13,7 @@ pub struct ToolCallBuilder {
     id: Option<String>,
     call_type: Option<String>,
     function_name: Option<String>,
-    function_arguments: Option<String>,
+    function_arguments: String, // Accumule les fragments d'arguments
     converted: bool,
 }
 
@@ -23,11 +23,15 @@ impl ToolCallBuilder {
             && self.id.is_some()
             && self.call_type.is_some()
             && self.function_name.is_some()
-            && self.function_arguments.is_some()
+            && !self.function_arguments.is_empty()
     }
 
     pub fn to_tool_call(&mut self) -> Option<ToolCall> {
         if !self.is_complete() {
+            return None;
+        }
+        // Vérifier que les arguments sont un JSON valide
+        if serde_json::from_str::<serde_json::Value>(&self.function_arguments).is_err() {
             return None;
         }
         self.converted = true;
@@ -36,7 +40,7 @@ impl ToolCallBuilder {
             call_type: self.call_type.clone().unwrap(),
             function: FunctionCall {
                 name: self.function_name.clone().unwrap(),
-                arguments: self.function_arguments.clone().unwrap(),
+                arguments: self.function_arguments.clone(),
             },
         })
     }
@@ -59,7 +63,7 @@ impl ToolCallBuilder {
                 self.function_name = Some(name.clone());
             }
             if let Some(arguments) = &function.arguments {
-                self.function_arguments = Some(arguments.clone());
+                self.function_arguments.push_str(arguments);
             }
         }
     }
@@ -126,6 +130,10 @@ impl StreamProcessor {
                     for line in lines {
                         if line.starts_with("data: ") {
                             let data = &line[6..]; // Supprimer "data: "
+                            if data.trim().is_empty() {
+                                // Ligne data vide, ignorer
+                                continue;
+                            }
                             if data.trim() == "[DONE]" {
                                 stream_done = true;
                                 break;
@@ -242,7 +250,7 @@ impl StreamProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::*;
+
 
     #[test]
     fn test_tool_call_builder_default() {
@@ -251,7 +259,7 @@ mod tests {
         assert!(builder.id.is_none());
         assert!(builder.call_type.is_none());
         assert!(builder.function_name.is_none());
-        assert!(builder.function_arguments.is_none());
+        assert!(builder.function_arguments.is_empty());
         assert!(!builder.converted);
         assert!(!builder.is_complete());
         assert!(builder.to_tool_call().is_none());
@@ -274,7 +282,7 @@ mod tests {
         assert_eq!(builder.id, Some("call_123".to_string()));
         assert_eq!(builder.call_type, Some("function".to_string()));
         assert_eq!(builder.function_name, Some("sh".to_string()));
-        assert_eq!(builder.function_arguments, Some("{\"command\": \"ls\"}".to_string()));
+        assert_eq!(builder.function_arguments, "{\"command\": \"ls\"}".to_string());
         assert!(builder.is_complete());
         assert!(!builder.converted);
     }
@@ -285,7 +293,7 @@ mod tests {
         builder.id = Some("call_123".to_string());
         builder.call_type = Some("function".to_string());
         builder.function_name = Some("sh".to_string());
-        builder.function_arguments = Some("{\"command\": \"ls\"}".to_string());
+        builder.function_arguments = "{\"command\": \"ls\"}".to_string();
         assert!(builder.is_complete());
         let tool_call = builder.to_tool_call();
         assert!(tool_call.is_some());
@@ -311,7 +319,7 @@ mod tests {
             function: None,
         };
         builder.update_from_delta(&delta1);
-        assert!(!builder.is_complete());
+        assert!(builder.to_tool_call().is_none());
         // Deuxième delta avec le type
         let delta2 = ToolCallDelta {
             index: None,
@@ -320,7 +328,7 @@ mod tests {
             function: None,
         };
         builder.update_from_delta(&delta2);
-        assert!(!builder.is_complete());
+        assert!(builder.to_tool_call().is_none());
         // Troisième delta avec le nom de fonction
         let delta3 = ToolCallDelta {
             index: None,
@@ -332,23 +340,34 @@ mod tests {
             }),
         };
         builder.update_from_delta(&delta3);
-        assert!(!builder.is_complete());
-        // Quatrième delta avec les arguments
+        assert!(builder.to_tool_call().is_none());
+        // Quatrième delta avec les arguments (premier fragment)
         let delta4 = ToolCallDelta {
             index: None,
             id: None,
             call_type: None,
             function: Some(FunctionCallDelta {
                 name: None,
-                arguments: Some("{\"command\": \"ls\"}".to_string()),
+                arguments: Some("{\"command\": ".to_string()),
             }),
         };
         builder.update_from_delta(&delta4);
-        assert!(builder.is_complete());
-        assert!(!builder.converted);
+        assert!(builder.to_tool_call().is_none()); // arguments pas encore valides JSON
+        // Cinquième delta avec la suite des arguments
+        let delta5 = ToolCallDelta {
+            index: None,
+            id: None,
+            call_type: None,
+            function: Some(FunctionCallDelta {
+                name: None,
+                arguments: Some("\"ls\"}".to_string()),
+            }),
+        };
+        builder.update_from_delta(&delta5);
         let tool_call = builder.to_tool_call();
-        assert!(tool_call.is_some());
+        assert!(tool_call.is_some()); // maintenant arguments valides JSON
         let tool_call = tool_call.unwrap();
+        assert!(builder.converted); // marqué comme converti
         assert_eq!(tool_call.id, "call_123");
         assert_eq!(tool_call.call_type, "function");
         assert_eq!(tool_call.function.name, "sh");
@@ -390,7 +409,7 @@ mod tests {
         builder.id = Some("call_123".to_string());
         builder.call_type = Some("function".to_string());
         builder.function_name = Some("sh".to_string());
-        builder.function_arguments = Some("{\"command\": \"ls\"}".to_string());
+        builder.function_arguments = "{\"command\": \"ls\"}".to_string();
         let _ = builder.to_tool_call(); // marque comme converted
         assert!(builder.converted);
         // Essayer de mettre à jour après conversion ne fait rien
@@ -408,7 +427,26 @@ mod tests {
         assert_eq!(builder.id, Some("call_123".to_string()));
         assert_eq!(builder.call_type, Some("function".to_string()));
         assert_eq!(builder.function_name, Some("sh".to_string()));
-        assert_eq!(builder.function_arguments, Some("{\"command\": \"ls\"}".to_string()));
+        assert_eq!(builder.function_arguments, "{\"command\": \"ls\"}".to_string());
+    }
+
+    #[test]
+    fn test_tool_call_builder_invalid_json() {
+        let mut builder = ToolCallBuilder::default();
+        builder.id = Some("call_123".to_string());
+        builder.call_type = Some("function".to_string());
+        builder.function_name = Some("sh".to_string());
+        builder.function_arguments = "{\"command\": }".to_string(); // JSON invalide
+        // is_complete retourne vrai car les champs sont présents et arguments non vides
+        assert!(builder.is_complete());
+        // Mais to_tool_call doit retourner None car JSON invalide
+        assert!(builder.to_tool_call().is_none());
+        // Le builder ne doit pas être marqué comme converted
+        assert!(!builder.converted);
+        // Si on corrige les arguments
+        builder.function_arguments = "{\"command\": \"ls\"}".to_string();
+        assert!(builder.to_tool_call().is_some());
+        assert!(builder.converted);
     }
 
     // Note: les tests pour StreamProcessor.process_response nécessitent des mocks HTTP,

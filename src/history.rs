@@ -7,6 +7,7 @@ pub struct HistoryManager {
     pub token_calibration_factor: f32,
     pub total_real_tokens_observed: u32,
     pub total_estimated_tokens: u32,
+    #[allow(dead_code)]
     pub max_history_messages: Option<usize>,
     pub max_context_tokens: Option<u32>,
     pub debug: bool,

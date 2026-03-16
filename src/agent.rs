@@ -37,6 +37,7 @@ impl Agent {
         max_retry_delay_ms: Option<u64>,
         shell_timeout_ms: Option<u64>,
         stream: Option<bool>,
+        base_url: Option<String>,
     ) -> Self {
         let stream_enabled = stream.unwrap_or(false);
         let max_retries_val = max_retries.unwrap_or(DEFAULT_MAX_RETRIES);
@@ -53,6 +54,7 @@ impl Agent {
                 max_retries_val,
                 retry_delay_ms_val,
                 max_retry_delay_ms_val,
+                base_url,
             ),
             history: HistoryManager::new(max_history_messages, max_context_tokens, debug),
             system_prompt,
@@ -142,7 +144,9 @@ impl Agent {
                 self.check_restart()?;
 
                 // Si l'assistant demande un outil
-                if let Some(tool_calls) = msg.tool_calls {
+                if let Some(ref tool_calls) = msg.tool_calls {
+                    // Afficher le contenu (si non vide) au cas où le streaming n'a pas été activé
+                    self.print_assistant_message(&msg);
                     let mut tool_results = Vec::new();
                     let mut interrupted = false;
 
@@ -161,9 +165,35 @@ impl Agent {
                             break;
                         }
                         if tool_call.function.name == "sh" {
+                            // Vérifier que les arguments ne sont pas vides
+                            if tool_call.function.arguments.is_empty() {
+                                tool_results.push(Message {
+                                    role: "tool".into(),
+                                    content: "Erreur: arguments JSON vides pour l'outil 'sh'".into(),
+                                    tool_calls: None,
+                                    tool_call_id: Some(tool_call.id.clone()),
+                                    token_count: None,
+                                });
+                                continue;
+                            }
                             // Extraire la commande des arguments JSON
-                            let args: serde_json::Value =
-                                serde_json::from_str(&tool_call.function.arguments)?;
+                            let args: serde_json::Value = match serde_json::from_str(&tool_call.function.arguments) {
+                                Ok(args) => args,
+                                Err(e) => {
+                                    let error_msg = format!("Erreur de parsing JSON: {}. Arguments: {}", e, tool_call.function.arguments);
+                                    if self.debug {
+                                        println!("[Debug] {}", error_msg);
+                                    }
+                                    tool_results.push(Message {
+                                        role: "tool".into(),
+                                        content: error_msg,
+                                        tool_calls: None,
+                                        tool_call_id: Some(tool_call.id.clone()),
+                                        token_count: None,
+                                    });
+                                    continue;
+                                }
+                            };
                             let command = args["command"].as_str().unwrap_or("").to_string();
 
                             // Vérification de sécurité
@@ -270,7 +300,7 @@ impl Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::*;
+
 
     #[test]
     fn test_make_tools() {
@@ -303,6 +333,7 @@ mod tests {
             Some(1000),
             Some(5000),
             Some(false),
+            None,
         );
         assert_eq!(agent.model, "deepseek-chat");
         assert_eq!(agent.system_prompt, Some("Test system prompt".to_string()));
@@ -321,6 +352,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             None,
             None,
             None,
@@ -345,6 +377,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             None,
             None,
             None,
@@ -375,6 +408,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             None,
             None,
             None,

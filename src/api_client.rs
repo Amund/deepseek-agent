@@ -6,7 +6,9 @@ use tokio::time::{sleep, Duration};
 pub struct ApiClient {
     client: Client,
     api_key: String,
+    #[allow(dead_code)]
     model: String,
+    base_url: String,
     stream: bool,
     debug: bool,
     max_retries: u32,
@@ -23,11 +25,13 @@ impl ApiClient {
         max_retries: u32,
         retry_delay_ms: u64,
         max_retry_delay_ms: u64,
+        base_url: Option<String>,
     ) -> Self {
         Self {
             client: Client::new(),
             api_key,
             model: model.unwrap_or_else(|| "deepseek-chat".to_string()),
+            base_url: base_url.unwrap_or_else(|| "https://api.deepseek.com".to_string()),
             stream,
             debug,
             max_retries,
@@ -53,7 +57,7 @@ impl ApiClient {
         for attempt in 0..=self.max_retries {
             match self
                 .client
-                .post("https://api.deepseek.com/v1/chat/completions")
+                .post(format!("{}/v1/chat/completions", self.base_url.trim_end_matches('/')))
                 .header("Authorization", format!("Bearer {}", self.api_key))
                 .json(&request)
                 .send()
@@ -84,15 +88,32 @@ impl ApiClient {
                             }
                         } else {
                             // Mode non-streaming
-                            match resp.json::<ChatResponse>().await {
-                                Ok(response) => {
-                                    return Ok(response);
+                            match resp.text().await {
+                                Ok(text) => {
+                                    if self.debug && attempt == 0 {
+                                        println!("[Debug] API response text (first {} chars): {}...", text.len().min(200), text.chars().take(200).collect::<String>());
+                                    }
+                                    match serde_json::from_str::<ChatResponse>(&text) {
+                                        Ok(response) => {
+                                            return Ok(response);
+                                        }
+                                        Err(e) => {
+                                            last_error = Some(format!("Error parsing JSON response: {}. Text: {}...", e, text.chars().take(200).collect::<String>()).into());
+                                            if self.debug {
+                                                println!(
+                                                    "[Debug] Error parsing response on attempt {}: {}",
+                                                    attempt,
+                                                    last_error.as_ref().unwrap()
+                                                );
+                                            }
+                                        }
+                                    }
                                 }
                                 Err(e) => {
-                                    last_error = Some(e.into());
+                                    last_error = Some(format!("Error reading response body: {}", e).into());
                                     if self.debug {
                                         println!(
-                                            "[Debug] Error parsing response on attempt {}: {}",
+                                            "[Debug] Error reading response body on attempt {}: {}",
                                             attempt,
                                             last_error.as_ref().unwrap()
                                         );
@@ -161,6 +182,7 @@ mod tests {
             3,
             100,
             1000,
+            None,
         );
         assert_eq!(client.api_key, "test_key");
         assert_eq!(client.model, "deepseek-chat");
@@ -181,6 +203,7 @@ mod tests {
             3,
             100,
             1000,
+            None,
         );
         assert_eq!(client.model, "deepseek-chat");
     }
@@ -195,6 +218,7 @@ mod tests {
             3,
             100,
             1000,
+            None,
         );
         // Tentative 0: 100 * 2^0 = 100
         assert_eq!(client.calculate_retry_delay(0), 100);
@@ -221,6 +245,7 @@ mod tests {
             3,
             u64::MAX,
             u64::MAX,
+            None,
         );
         // Tentative 0: u64::MAX * 1 = u64::MAX
         assert_eq!(client.calculate_retry_delay(0), u64::MAX);

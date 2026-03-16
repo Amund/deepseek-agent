@@ -59,6 +59,7 @@ pub fn check_escape_pressed() -> bool {
 
 /// Exécute une action avec vérification périodique d'interruption.
 /// La fonction `check` est appelée périodiquement ; si elle retourne true, on arrête.
+#[allow(dead_code)]
 pub fn run_with_interrupt_check<F, C>(action: F, mut check: C) -> bool
 where
     F: FnOnce() -> bool,

@@ -50,6 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             config.max_retry_delay_ms,
             config.shell_timeout_ms,
             config.stream,
+            None,
         );
 
         // Exécuter l'agent
