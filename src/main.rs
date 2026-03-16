@@ -9,6 +9,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialiser le gestionnaire d'interruption (Ctrl+C)
     deepseek_agent::interrupt::init_interrupt_handler();
+    // Initialiser les couleurs
+    deepseek_agent::ui::init_colors();
 
     // Calculer la limite de tokens par défaut si non spécifiée
     let max_context_tokens = config

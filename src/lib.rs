@@ -18,6 +18,7 @@ pub mod session;
 pub mod shell;
 pub mod streaming;
 pub mod token_management;
+pub mod ui;
 
 // Ré-export des types principaux pour une utilisation simplifiée
 pub use agent::Agent;
@@ -28,3 +29,4 @@ pub use history::HistoryManager;
 pub use session::{check_and_restart_if_needed, RestartSessionError};
 pub use shell::ShellExecutor;
 pub use token_management::*;
+pub use ui::{colors_enabled, init_colors, MessageFormatter};

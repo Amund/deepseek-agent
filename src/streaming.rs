@@ -3,6 +3,7 @@ use crate::interrupt;
 use futures::StreamExt;
 use reqwest::Response;
 use std::io::Write;
+use colored::*;
 
 
 
@@ -149,7 +150,7 @@ impl StreamProcessor {
                                             // Afficher le contenu au fur et à mesure
                                             if !content.is_empty() {
                                                 if !prefix_printed {
-                                                    print!("Agent: ");
+                                                    print!("{} ", "Agent:".blue().bold());
                                                     std::io::stdout().flush().ok();
                                                     prefix_printed = true;
                                                 }

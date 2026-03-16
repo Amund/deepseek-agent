@@ -25,6 +25,7 @@ Le code a été refactorisé en modules spécialisés pour améliorer la mainten
 - **shell.rs** : Exécution des commandes shell avec timeout
 - **streaming.rs** : Traitement des réponses streaming (ToolCallBuilder, parsing SSE)
 - **token_management.rs** : Estimation des tokens et détermination des limites par modèle
+- **ui.rs** : Interface utilisateur améliorée avec couleurs
 
 ### Structure des fichiers
 
@@ -41,7 +42,8 @@ deepseek-agent/
 │   ├── session.rs         # Redémarrage session
 │   ├── shell.rs           # Exécution shell
 │   ├── streaming.rs       # Traitement streaming
-│   └── token_management.rs # Estimation tokens
+│   ├── token_management.rs # Estimation tokens
+│   └── ui.rs              # Interface utilisateur améliorée
 ├── Cargo.toml             # Configuration Rust
 ├── README.md              # Documentation utilisateur
 ├── AGENTS.md              # Ce fichier (documentation agents)
@@ -77,6 +79,7 @@ deepseek-agent/
    - Timeout configurable pour les commandes shell
    - Logs de débogage détaillés
 9. **Support des tool_calls en streaming** : Accumulation correcte des fragments d'arguments JSON
+10. **Interface utilisateur améliorée** : Coloration syntaxique, gestion des couleurs via variables d'environnement
 
 ### 🔧 Configuration avancée
 
@@ -110,14 +113,15 @@ deepseek-agent/
 - [x] Tests unitaires pour les nouveaux modules
 - [x] Suppression de la validation de sécurité (listes blanche/noire, patterns dangereux)
 - [x] Tests d'intégration : Ajouter des tests d'intégration dans le dossier `tests/`
+- [x] Interface utilisateur améliorée : Coloration syntaxique (historique persistant retiré pour respecter le contrat de légèreté)
 
 ### 🔄 Dernière Mise à Jour
 
 **Date** : 2026-03-23  
 **Agent** : Assistant IA  
-**Contexte** : Ajout de tests d'intégration avec mockito pour simuler l'API et tester le flux complet. Refactorisation du projet en librairie + binaire pour permettre les tests d'intégration.
+**Contexte** : Suppression de l'historique persistant des commandes pour respecter le contrat de départ (programme léger et sans persistance). Conservation de la coloration syntaxique via le module `ui.rs` avec gestion des couleurs (variables DEEPSEEK_AGENT_NO_COLOR et DEEPSEEK_AGENT_COLOR). Amélioration de l'affichage des messages (agent, shell, erreurs) avec des couleurs.
 
-**État du projet** : ✅ **Fonctionnel et bien testé** - Les fonctionnalités de base sont opérationnelles avec des tests unitaires et d'intégration. Le code est structuré en librairie et binaire pour une meilleure maintenabilité.
+**État du projet** : ✅ **Fonctionnel et bien testé** - Les fonctionnalités de base sont opérationnelles avec des tests unitaires et d'intégration. Le code est structuré en librairie et binaire pour une meilleure maintenabilité. L'interface utilisateur offre une expérience améliorée avec couleurs, sans persistance pour rester léger.
 
 ### 🛠️ Décisions Techniques Prises
 
@@ -146,7 +150,7 @@ deepseek-agent/
 ### 📈 Prochaines Étapes
 
 1. **Tests d'intégration** : ✅ Complété
-2. **Interface utilisateur améliorée** : Historique de commandes, coloration syntaxique
+2. **Interface utilisateur améliorée** : ✅ Complété
 3. **Optimisations de performance** : Réduction de la consommation mémoire, parallélisation
 4. **Fonctionnalités avancées** : Support de plusieurs outils, mode batch
 5. **Documentation API** : Documentation détaillée des modules internes

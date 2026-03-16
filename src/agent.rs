@@ -9,6 +9,7 @@ use crate::history::HistoryManager;
 use crate::interrupt;
 use crate::session::{self, RestartSessionError};
 use crate::shell::ShellExecutor;
+use crate::ui::MessageFormatter;
 
 pub struct Agent {
     api_client: ApiClient,
@@ -18,6 +19,7 @@ pub struct Agent {
     model: String,
     debug: bool,
     stream: bool,
+    formatter: MessageFormatter,
 }
 
 impl Agent {
@@ -60,6 +62,7 @@ impl Agent {
             model: model_str,
             debug,
             stream: stream_enabled,
+            formatter: MessageFormatter::new(),
         }
     }
 
@@ -69,7 +72,7 @@ impl Agent {
             // Mais on peut ajouter une nouvelle ligne si nécessaire
             // Le streaming ajoute déjà une nouvelle ligne à la fin
         } else if !msg.content.is_empty() {
-            println!("Agent: {}", msg.content);
+            println!("{} {}", self.formatter.assistant_prefix(), self.formatter.assistant_message(&msg.content));
         }
     }
 
@@ -127,7 +130,7 @@ impl Agent {
                         Err(e) => {
                             let error_msg = format!("Erreur de parsing JSON: {}. Arguments: {}", e, tool_call.function.arguments);
                             if self.debug {
-                                println!("[Debug] {}", error_msg);
+                                println!("{}", self.formatter.debug_message(&error_msg));
                             }
                             tool_results.push(Message {
                                 role: "tool".into(),
@@ -143,7 +146,7 @@ impl Agent {
 
 
 
-                    println!("[Shell] Exécution : {}", command);
+                    println!("{}", self.formatter.shell_command_message(&format!("{}", command)));
                     let output = self.shell_executor.exec(&command).await;
 
                     // Ajouter le résultat à la liste
@@ -166,7 +169,7 @@ impl Agent {
             self.check_restart()?;
 
             if interrupted {
-                println!("[Interruption] Exécution des commandes interrompue.");
+                println!("{}", self.formatter.warning_message("Exécution des commandes interrompue."));
                 break;
             }
             if tool_results.is_empty() {
@@ -201,7 +204,7 @@ impl Agent {
         });
 
         println!("Agent DeepSeek. Tapez 'quit' pour sortir.");
-        let mut stdin = rustyline::DefaultEditor::new()?;
+        let mut editor = rustyline::DefaultEditor::new()?;
 
         loop {
             // Vérifier si une interruption a été demandée (Ctrl+C ou Échap)
@@ -212,7 +215,7 @@ impl Agent {
             // Réinitialiser le flag d'interruption après la vérification
             interrupt::reset_interrupt();
             
-            let user_input = match stdin.readline(">> ") {
+            let user_input = match editor.readline(&format!("{} ", self.formatter.user_prompt())) {
                 Ok(line) => line,
                 Err(ReadlineError::Interrupted) => {
                     // Ctrl+C pendant la lecture de ligne

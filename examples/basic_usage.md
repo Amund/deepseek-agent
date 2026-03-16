@@ -28,7 +28,7 @@ export DEEPSEEK_API_KEY=votre_clé_api
 **Agent :**
 ```
 Agent: Je vais vérifier la date et l'heure pour vous.
-[Shell] Exécution : date
+[Shell] date
 Agent: La date et l'heure actuelles sont : Mon Dec 30 14:30:00 UTC 2024
 ```
 
@@ -44,7 +44,7 @@ Agent: La date et l'heure actuelles sont : Mon Dec 30 14:30:00 UTC 2024
 **Agent :**
 ```
 Agent: Je vais lister les fichiers avec leurs permissions.
-[Shell] Exécution : ls -la
+[Shell] ls -la
 Agent: Voici la liste des fichiers :
 total 48
 drwxr-xr-x  4 user user  4096 Dec 30 14:00 .
@@ -66,7 +66,7 @@ drwxr-xr-x  2 user user  4096 Dec 30 14:00 target
 **Agent :**
 ```
 Agent: Je vais vérifier l'espace disque disponible.
-[Shell] Exécution : df -h
+[Shell] df -h
 Agent: Voici l'utilisation du disque :
 Filesystem      Size  Used Avail Use% Mounted on
 /dev/sda1        50G   20G   28G  42% /
@@ -85,7 +85,7 @@ tmpfs           3.9G     0  3.9G   0% /dev/shm
 **Agent :**
 ```
 Agent: Je vais rechercher les fichiers Rust contenant "agent".
-[Shell] Exécution : find . -name "*.rs" -exec grep -l "agent" {} \;
+[Shell] find . -name "*.rs" -exec grep -l "agent" {} \;
 Agent: Voici les fichiers trouvés :
 ./src/main.rs
 ```
@@ -102,7 +102,7 @@ Agent: Voici les fichiers trouvés :
 **Agent :**
 ```
 Agent: Je vais vérifier les processus utilisant le plus de mémoire.
-[Shell] Exécution : ps aux --sort=-%mem | head -6
+[Shell] ps aux --sort=-%mem | head -6
 Agent: Voici les processus utilisant le plus de mémoire :
 USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
 user      1234  2.5 15.2 1023456 789012 pts/0  Sl   14:00   0:05 /usr/bin/chrome
@@ -121,7 +121,7 @@ user      5678  1.2  8.7  654321 456789 pts/0  Sl   14:10   0:02 /usr/bin/code
 **Agent :**
 ```
 Agent: Je vais vous donner un résumé du système.
-[Shell] Exécution : echo "Date: $(date)" && echo "Utilisateur: $(whoami)" && echo "Répertoire: $(pwd)"
+[Shell] echo "Date: $(date)" && echo "Utilisateur: $(whoami)" && echo "Répertoire: $(pwd)"
 Agent: Voici le résumé :
 Date: Mon Dec 30 14:35:00 UTC 2024
 Utilisateur: user
@@ -140,33 +140,12 @@ Répertoire: /home/user/projects/deepseek-agent
 **Agent :**
 ```
 Agent: Je vais compter les lignes dans les fichiers Markdown.
-[Shell] Exécution : find . -name "*.md" -exec wc -l {} \;
+[Shell] find . -name "*.md" -exec wc -l {} \;
 Agent: Voici le nombre de lignes par fichier :
   45 ./README.md
   30 ./TODO.md
   25 ./AGENTS.md
  100 total
-```
-
-## 🛡️ Utilisation avec liste blanche
-
-Si vous activez la liste blanche (dans `src/main.rs`), seules les commandes autorisées fonctionneront :
-
-**Configuration :**
-```rust
-let whitelist = Some(vec![
-    "ls".to_string(),
-    "date".to_string(),
-    "echo".to_string(),
-]);
-```
-
-**Interaction avec commande non autorisée :**
-```
->> Supprime tous les fichiers (rm -rf /)
-Agent: Je vais exécuter cette commande.
-[Shell] Exécution : rm -rf /
-Commande 'rm' non autorisée
 ```
 
 ## 🔧 Scénarios avancés
