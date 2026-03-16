@@ -123,6 +123,8 @@ deepseek-agent/
 
 **Suppression de `max_history_messages`** : Cette variable d'environnement était un reliquat d'une ancienne fonctionnalité. La gestion du contexte repose désormais entièrement sur le calcul des tokens (`max_context_tokens`). La variable a été retirée du code, de la configuration et de la documentation.
 
+**Correction des lignes vides entre les tool_calls** : Lorsque l'agent appelle plusieurs outils en séquence sans message visible entre eux, une ligne vide parasite était affichée dans le terminal. Cette ligne vide provenait du saut de ligne ajouté systématiquement après le streaming, même quand aucun contenu n'était affiché. Correction : le saut de ligne n'est ajouté que si du contenu a effectivement été affiché pendant le streaming.
+
 **État du projet** : ✅ **Fonctionnel et bien testé** - Les fonctionnalités de base sont opérationnelles avec des tests unitaires et d'intégration. Le code est structuré en librairie et binaire pour une meilleure maintenabilité. L'interface utilisateur offre une expérience améliorée avec couleurs, sans persistance pour rester léger.
 
 ### 🛠️ Décisions Techniques Prises

@@ -221,8 +221,8 @@ impl StreamProcessor {
         }
         if interrupted {
             println!("\n[Interruption] Réponse interrompue par l'utilisateur.");
-        } else {
-            println!(); // Nouvelle ligne après le streaming
+        } else if prefix_printed {
+            println!(); // Nouvelle ligne après le streaming seulement si quelque chose a été affiché
         }
 
         // Si nous avons accumulé des tool_calls, les ajouter au message
