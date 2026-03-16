@@ -1,24 +1,52 @@
 # deepseek-agent
 
 Un agent CLI minimal écrit en Rust, utilisant l'API native de DeepSeek.  
-Conçu pour être **léger, sans persistance** (tout en mémoire) et **destiné à tourner dans un conteneur Docker**.  
-L'agent ne dispose que d'un seul outil : l'exécution de commandes shell (`sh`), ce qui en fait un assistant puissant mais simple, parfait pour des expérimentations ou des tâches automatisées dans un environnement isolé.
+Conçu pour être **léger, modulaire et extensible**. L'agent dispose d'un seul outil : l'exécution de commandes shell (`sh`), ce qui en fait un assistant puissant pour l'automatisation de tâches système dans un environnement contrôlé.
 
 ## ✨ Fonctionnalités
 
-- **Appel à l'API DeepSeek** (modèle `deepseek-chat`) pour générer des réponses et décider d'utiliser l'outil shell.
-- **Exécution de commandes shell** via l'outil `sh` (bash). Les commandes sont exécutées localement, sans sandboxing additionnel (l'isolation est déléguée au conteneur Docker).
-- **Historique de conversation en mémoire** : aucune donnée n'est écrite sur le disque.
-- **Liste blanche optionnelle** des commandes autorisées, configurable directement dans le code (par sécurité, même dans Docker).
-- **Gestion complète des `tool_calls`** : l'agent peut appeler l'outil, recevoir le résultat, et poursuivre la conversation.
-- **Interface en ligne de commande interactive** simple (saisie utilisateur, affichage des réponses).
-- **Interruption avec Ctrl+C ou Échap** : permet d'arrêter un traitement en cours (streaming ou exécution de commande) et de retourner à l'invite utilisateur.
+- **Appels API DeepSeek** : Support complet des modèles `deepseek-chat` et `deepseek-reasoner` avec streaming des réponses
+- **Exécution de commandes shell** via l'outil `sh` (bash) avec timeout configurable
+- **Gestion intelligente du contexte** :
+  - Estimation et calibration automatique des tokens
+  - Optimisation du cache KV DeepSeek
+  - Redémarrage automatique de session lorsque le contexte approche de la limite
+- **Chargement automatique du contexte** : Les fichiers `AGENTS.md`, `README.md` et `CONTINUE.md` sont automatiquement chargés au démarrage
+- **Gestion des interruptions** :
+  - **Ctrl+C** : Interrompt un traitement en cours et quitte l'application
+  - **Échap** : Interrompt le streaming d'une réponse
+- **Sécurité avancée** :
+  - Listes blanche/noire configurables via variables d'environnement (CSV)
+  - Validation sur tous les tokens des commandes
+  - Détection de patterns dangereux (injection de commandes)
+- **Gestion robuste des erreurs** :
+  - Retry automatique avec backoff exponentiel pour les appels API
+  - Logs de débogage détaillés
+  - Timeout configurable pour l'exécution des commandes shell
+- **Architecture modulaire** : Code organisé en 11 modules spécialisés pour une maintenabilité optimale
+- **Support des tool_calls en streaming** : Accumulation correcte des fragments d'arguments JSON
+
+## 🏗️ Architecture Modulaire
+
+Le projet est organisé en modules Rust spécialisés :
+
+- **agent.rs** : Coordination générale, boucle interactive, traitement des tool_calls
+- **api.rs** : Définitions des structures de données pour l'API
+- **api_client.rs** : Appels HTTP avec retry et gestion du streaming
+- **config.rs** : Chargement de la configuration depuis les variables d'environnement
+- **history.rs** : Gestion de l'historique des messages, estimation des tokens, calibration
+- **interrupt.rs** : Gestion des interruptions (Ctrl+C, touche Échap)
+- **security.rs** : Validation des commandes shell (listes blanche/noire, patterns dangereux)
+- **session.rs** : Redémarrage de session et création du fichier CONTINUE.md
+- **shell.rs** : Exécution des commandes shell avec timeout
+- **streaming.rs** : Traitement des réponses streaming (ToolCallBuilder, parsing SSE)
+- **token_management.rs** : Estimation des tokens et détermination des limites par modèle
 
 ## 📋 Prérequis
 
-- [Rust](https://www.rust-lang.org/) (dernière version stable) si vous souhaitez compiler vous-même.
-- Une clé d'API DeepSeek (obtenable sur [platform.deepseek.com](https://platform.deepseek.com/)).
-- Docker (optionnel, pour exécuter l'agent dans un conteneur).
+- [Rust](https://www.rust-lang.org/) (dernière version stable)
+- Une clé d'API DeepSeek (obtenable sur [platform.deepseek.com](https://platform.deepseek.com/))
+- Docker (optionnel, pour exécution en conteneur)
 
 ## 🚀 Installation
 
@@ -44,6 +72,8 @@ Le binaire compilé se trouvera dans `target/release/deepseek-agent`.
    DEEPSEEK_API_KEY=votre_clé_api_ici
    ```
 
+3. Optionnellement, configurez d'autres variables (voir section Configuration Avancée ci-dessous).
+
 ## 🎯 Utilisation
 
 ### Lancer l'agent
@@ -64,11 +94,11 @@ cargo run --release
 
 Une fois lancé, l'agent affiche :
 ```
-Agent DeepSeek minimal (Docker). Tapez 'quit' pour sortir.
+Agent DeepSeek. Tapez 'quit' pour sortir.
 >> 
 ```
 
-**Interruption** : Pendant qu'une réponse est générée (streaming) ou qu'une commande shell s'exécute, vous pouvez appuyer sur **Ctrl+C** ou **Échap** pour interrompre le traitement et retourner à l'invite `>>`.
+**Interruption** : Pendant qu'une réponse est générée (streaming) ou qu'une commande shell s'exécute, vous pouvez appuyer sur **Ctrl+C** pour interrompre le traitement et quitter l'application, ou sur **Échap** pour interrompre seulement le streaming et retourner à l'invite.
 
 Vous pouvez alors :
 - Poser des questions en texte libre
@@ -77,56 +107,11 @@ Vous pouvez alors :
 
 ### Exemples d'interaction
 
-```
->> Quelle est la date actuelle ?
-Agent: Je vais vérifier la date pour vous.
-[Shell] Exécution : date
-Agent: La date est: Mon Dec 30 12:00:00 UTC 2024
-```
+Voir le fichier [examples/basic_usage.md](examples/basic_usage.md) pour des exemples détaillés.
 
-```
->> Liste les fichiers avec leurs tailles
-Agent: Je vais lister les fichiers avec leurs tailles.
-[Shell] Exécution : ls -lh
-Agent: Voici la liste des fichiers :
--rw-r--r-- 1 user user 1.2K Dec 30 11:30 README.md
--rw-r--r-- 1 user user 2.3K Dec 30 11:30 src/main.rs
-...
-```
+## ⚙️ Configuration Avancée
 
-## ⚙️ Configuration
-
-### Configuration de la sécurité
-
-#### Via variables d'environnement (recommandé)
-```bash
-# Liste blanche (commandes autorisées)
-export DEEPSEEK_AGENT_WHITELIST="ls,cat,echo,grep,find"
-
-# Liste noire (commandes interdites)
-export DEEPSEEK_AGENT_BLACKLIST="rm,shutdown,reboot,dd,mkfs"
-```
-
-#### Via modification du code (avancé)
-Si vous préférez configurer directement dans le code, modifiez le fichier `src/main.rs` dans la fonction `main()` :
-
-```rust
-// Configuration dans le code
-let whitelist = Some(vec![
-    "ls".to_string(),
-    "cat".to_string(),
-    "echo".to_string(),
-    "grep".to_string(),
-]);
-let blacklist = Some(vec![
-    "rm".to_string(),
-    "shutdown".to_string(),
-]);
-```
-
-**Priorité** : La liste noire est vérifiée avant la liste blanche. Si une commande est à la fois dans les deux listes, elle sera interdite.
-
-### Variables d'environnement
+Toutes les options sont configurables via variables d'environnement :
 
 | Variable | Description | Défaut |
 |----------|-------------|---------|
@@ -142,11 +127,12 @@ let blacklist = Some(vec![
 | `DEEPSEEK_AGENT_RETRY_DELAY_MS` | Délai initial entre les tentatives (ms) | `1000` |
 | `DEEPSEEK_AGENT_MAX_RETRY_DELAY_MS` | Délai maximum entre les tentatives (ms) | `30000` |
 | `DEEPSEEK_AGENT_SHELL_TIMEOUT_MS` | Timeout pour l'exécution des commandes shell (ms) | Aucun |
+| `DEEPSEEK_AGENT_STREAM` | Activer le streaming des réponses | Activé (true) |
 | `DEEPSEEK_AGENT_SKIP_CONTEXT_FILES` | Désactiver le chargement automatique des fichiers AGENTS.md et README.md | Désactivé (fichiers chargés par défaut) |
 
 **Calibration automatique** : L'agent estime automatiquement le nombre de tokens utilisés et ajuste ses estimations grâce aux données renvoyées par l'API DeepSeek. Cela permet une gestion précise du contexte et une optimisation du cache KV de DeepSeek.
 
-Exemple de configuration :
+Exemple de configuration complète :
 ```bash
 export DEEPSEEK_API_KEY=votre_clé
 export DEEPSEEK_AGENT_MODEL=deepseek-chat
@@ -167,15 +153,7 @@ export DEEPSEEK_AGENT_SKIP_CONTEXT_FILES=1       # Désactiver le chargement aut
 
 ### Structure du projet
 
-```
-deepseek-agent/
-├── src/main.rs          # Code source principal
-├── Cargo.toml          # Configuration Rust
-├── README.md           # Documentation
-├── AGENTS.md           # Documentation pour les agents IA
-├── env.example         # Template de configuration
-└── .gitignore         # Fichiers à ignorer
-```
+Voir la section [Architecture Modulaire](#🏗️-architecture-modulaire) pour une description détaillée des modules.
 
 ### Commandes de développement
 
@@ -195,7 +173,7 @@ cargo fmt
 # Vérifier les warnings
 cargo clippy
 
-# Exécuter les tests (à venir)
+# Exécuter les tests unitaires
 cargo test
 ```
 
@@ -215,6 +193,9 @@ rustc --version
 
 ### L'agent ne répond pas
 Vérifiez votre connexion internet et la validité de votre clé API.
+
+### Streaming des tool_calls échoue avec "EOF while parsing a value"
+Cela peut être dû à des arguments vides dans les tool_calls. Activez le mode debug (`DEEPSEEK_AGENT_DEBUG=1`) pour plus de détails.
 
 ## 📄 Licence
 

@@ -1,4 +1,4 @@
-# AGENTS.md - deepseek-agent
+# deepseek-agent
 
 Documentation pour les agents IA reprenant le projet. Ce fichier contient le contexte, l'état actuel, les décisions techniques et les prochaines étapes.
 
@@ -9,91 +9,91 @@ Documentation pour les agents IA reprenant le projet. Ce fichier contient le con
 **Objectif** : Un agent CLI minimal utilisant l'API DeepSeek avec un seul outil - l'exécution de commandes shell (`sh`).  
 **Philosophie** : Léger, sans persistance (tout en mémoire), destiné à tourner dans un conteneur Docker, donc sans sandboxing supplémentaire pour les commandes exécutées.
 
-## 📁 Structure du Projet (mise à jour)
+## 🏗️ Architecture Modulaire
+
+Le code a été refactorisé en modules spécialisés pour améliorer la maintenabilité et permettre des tests unitaires ciblés :
+
+### Modules principaux
+
+- **agent.rs** : Coordination générale, boucle interactive, traitement des tool_calls
+- **api.rs** : Définitions des structures de données pour l'API (messages, requêtes, réponses)
+- **api_client.rs** : Appels HTTP avec retry et gestion du streaming
+- **config.rs** : Chargement de la configuration depuis les variables d'environnement
+- **history.rs** : Gestion de l'historique des messages, estimation des tokens, calibration
+- **interrupt.rs** : Gestion des interruptions (Ctrl+C, touche Échap)
+- **security.rs** : Validation des commandes shell (listes blanche/noire, patterns dangereux)
+- **session.rs** : Redémarrage de session et création du fichier CONTINUE.md
+- **shell.rs** : Exécution des commandes shell avec timeout
+- **streaming.rs** : Traitement des réponses streaming (ToolCallBuilder, parsing SSE)
+- **token_management.rs** : Estimation des tokens et détermination des limites par modèle
+
+### Structure des fichiers
 
 ```
 deepseek-agent/
 ├── src/
-│   └── main.rs            # Code principal
+│   ├── main.rs            # Point d'entrée, initialisation des modules
+│   ├── agent.rs           # Logique principale de l'agent
+│   ├── api.rs             # Structures API
+│   ├── api_client.rs      # Client HTTP avec retries
+│   ├── config.rs          # Configuration
+│   ├── history.rs         # Gestion historique
+│   ├── interrupt.rs       # Gestion interruptions
+│   ├── security.rs        # Validation sécurité
+│   ├── session.rs         # Redémarrage session
+│   ├── shell.rs           # Exécution shell
+│   ├── streaming.rs       # Traitement streaming
+│   └── token_management.rs # Estimation tokens
 ├── Cargo.toml             # Configuration Rust
-├── README.md              # Documentation complétée
-├── AGENTS.md              # Ce fichier
+├── README.md              # Documentation utilisateur
+├── AGENTS.md              # Ce fichier (documentation agents)
 ├── env.example            # Template de configuration
 ├── .gitignore             # Fichiers ignorés
+├── Makefile               # Commandes Docker
+├── docker-compose.yml     # Configuration Docker
+├── tests/                 # Tests d'intégration (vide pour l'instant)
 └── examples/              # Exemples d'utilisation
-    └── basic_usage.md     # Exemples détaillés
+    ├── basic_usage.md     # Exemples détaillés
+    └── continue_example.md # Exemple de fichier CONTINUE.md
 ```
 
+## ✨ Fonctionnalités Principales
 
-## 🏗️ Architecture Modulaire (Refactorisation)
+### ✅ Fonctionnalités implémentées
 
-Le code a été refactorisé en modules spécialisés pour réduire la taille du fichier agent.rs (passé de 1163 à 217 lignes) :
+1. **Appels API DeepSeek** : Support complet des modèles deepseek-chat et deepseek-reasoner
+2. **Exécution de commandes shell** via l'outil `sh` (bash)
+3. **Streaming des réponses** : Affichage en temps réel des réponses de l'API
+4. **Gestion d'historique intelligente** :
+   - Estimation et calibration des tokens
+   - Optimisation du cache KV DeepSeek
+   - Limites configurables (messages et tokens)
+5. **Redémarrage automatique de session** : Création d'un fichier CONTINUE.md lorsque moins de 4000 tokens restent
+6. **Chargement automatique du contexte** : AGENTS.md, README.md et CONTINUE.md chargés automatiquement au démarrage
+7. **Gestion des interruptions** :
+   - Ctrl+C pour arrêter un traitement et quitter l'application
+   - Touche Échap pour interrompre le streaming d'une réponse
+8. **Sécurité configurable** :
+   - Listes blanche/noire de commandes (CSV via variables d'environnement)
+   - Détection de patterns dangereux
+   - Validation sur tous les tokens des commandes
+9. **Gestion robuste des erreurs** :
+   - Retry automatique avec backoff exponentiel
+   - Timeout configurable pour les commandes shell
+   - Logs de débogage détaillés
+10. **Support des tool_calls en streaming** : Accumulation correcte des fragments d'arguments JSON
 
-- **agent.rs** : Coordination générale, boucle interactive, traitement des tool_calls
-- **api_client.rs** : Appels HTTP avec retry et gestion du streaming
-- **history.rs** : Gestion de l'historique des messages, estimation des tokens, calibration
-- **session.rs** : Redémarrage de session et création du fichier CONTINUE.md
-- **streaming.rs** : Traitement des réponses streaming (ToolCallBuilder, parsing SSE)
-- **security.rs** et **shell.rs** : inchangés
+### 🔧 Configuration avancée
 
-Cette séparation des responsabilités améliore la maintenabilité et permet des tests unitaires ciblés.
+- **Variables d'environnement** : Toutes les options configurables via variables d'environnement
+- **Personnalisation du prompt système** : Support des prompts personnalisés
+- **Limites de contexte par modèle** : Détermination automatique des limites de tokens
+- **Cache KV DeepSeek** : Optimisation via calibration des tokens
 
-## 🔍 Analyse Technique
-
-### Problèmes Identifiés (src/main.rs) - État actuel
-
-1. **✅ Fichier Cargo.toml créé** - Projet maintenant compilable
-2. **✅ Sécurité améliorée** (ligne ~154) :
-   ```rust
-   let cmd_name = command.split_whitespace().next().unwrap_or("");
-   ```
-   → Validation étendue : blacklist sur tous les tokens, patterns dangereux détectés, validation basique des séparateurs
-3. **✅ Gestion optimisée des tool_calls** (lignes 135-140) :
-   ```rust
-   for tool_call in tool_calls {
-       // ... exécution
-   }
-   // Un seul appel API final après traitement de tous les tool_calls
-   ```
-   → Collecte de tous les résultats d'abord, puis un seul appel API final
-4. **✅ Historique limité** :
-   ```rust
-   messages: Vec<Message>  // Avec fenêtre glissante configurable
-   ```
-   → Limite configurable de messages/tokens, conservation du message système, optimisation du cache KV
-5. **✅ Gestion d'erreurs avancée** - Retries avec backoff exponentiel, timeout shell, messages d'erreur améliorés
-6. **✅ Warnings nettoyés** - Import inutilisé `VecDeque` supprimé, champ `finish_reason` supprimé
-7. **✅ Chargement automatique des fichiers de contexte** - AGENTS.md et README.md chargés automatiquement au démarrage (configurable via `DEEPSEEK_AGENT_SKIP_CONTEXT_FILES`)
-8. **✅ Streaming des réponses** - Implémentation du streaming SSE avec gestion de buffer pour les chunks fragmentés, configurable via `DEEPSEEK_AGENT_STREAM`
-9. **✅ Gestion des tokens avec redémarrage de session** - Lorsqu'il reste moins de 4000 tokens disponibles, la session actuelle est stoppée, un fichier CONTINUE.md est créé avec un résumé de la tâche en cours, et une nouvelle session est automatiquement relancée avec le contexte des fichiers AGENTS.md, README.md et CONTINUE.md. Le fichier CONTINUE.md est supprimé après lecture. Cette approche remplace le nettoyage optimisé du contexte.
-10. **✅ Correction du streaming des tool_calls** - Les arguments des tool_calls en streaming étaient mal accumulés (remplacement au lieu de concaténation). Correction de `ToolCallBuilder` pour concaténer les fragments d'arguments et validation des arguments non vides. Ajout de logs de débogage pour les erreurs de parsing JSON.
-
-## 🛠️ Décisions Techniques Prises
-
-### 1. Architecture
-- **Pas de Docker pour le moment** : L'utilisateur préfère compiler et exécuter en local
-- **Priorité** : Rendre le projet compilable avant toute optimisation
-
-## Documentation
-
-### API DeepSeek
-
-- Create Chat Completion : https://api-docs.deepseek.com/api/create-chat-completion
-- Lists Models : https://api-docs.deepseek.com/api/list-models
-- Get User Balance : https://api-docs.deepseek.com/api/get-user-balance
-
-### API Guides DeepSeek
-
-- Thinking Mode : https://api-docs.deepseek.com/guides/thinking_mode
-- Multi-round Conversation : https://api-docs.deepseek.com/guides/multi_round_chat
-- Chat Prefix Completion (Beta) : https://api-docs.deepseek.com/guides/chat_prefix_completion
-- JSON Output : https://api-docs.deepseek.com/guides/json_mode
-- Tool Calls : https://api-docs.deepseek.com/guides/tool_calls
-- Context Caching : https://api-docs.deepseek.com/guides/kv_cache
-
-## 📋 État d'Avancement (mise à jour)
+## 📋 État d'Avancement
 
 ### ✅ Tâches Complétées
+
 - [x] Analyse du code existant et identification des problèmes
 - [x] Création de AGENTS.md pour documentation des agents
 - [x] Création de Cargo.toml avec dépendances exactes
@@ -110,69 +110,72 @@ Cette séparation des responsabilités améliore la maintenabilité et permet de
 - [x] Interruption avec Ctrl+C pour arrêter un traitement en cours (streaming et commandes shell) et quitter l'application
 - [x] Interruption avec touche Échap pour arrêter le streaming de réponse
 - [x] Ctrl+C permet de quitter complètement l'application (en plus d'interrompre le traitement)
+- [x] Correction des bugs dans le streaming des tool_calls (concaténation des arguments, validation des arguments vides)
+- [x] Ajout de logs de débogage pour les réponses API
+- [x] Tests unitaires pour les nouveaux modules
 
-### 📋 Amélioration possibles
-- Ajouter des tests unitaires et d'intégration
-- Améliorer l'interface utilisateur (historique de commandes, coloration)
-- Documenter l'API interne et les décisions techniques
-- Tests unitaires pour le streaming des tool_calls
-
-## 🚀 Commandes Utiles
-
-### Pour tester la compilation
-```bash
-# Vérifier la syntaxe
-cargo check
-
-# Compiler en mode debug
-cargo build
-
-# Compiler en mode release (optimisé)
-cargo build --release
-
-# Exécuter (avec variable d'environnement)
-DEEPSEEK_API_KEY=your_key_here cargo run
-```
-
-### Pour développer
-```bash
-# Formatter le code
-cargo fmt
-
-# Vérifier les warnings
-cargo clippy
-
-# Exécuter les tests (à créer)
-cargo test
-```
-
-## 💡 Notes pour les Agents Futurs
-
-### À garder en tête
-- L'utilisateur ne veut pas de Docker pour le moment
-- Priorité : fonctionnalité de base avant optimisations
-- Garder le code simple et lisible
-- Documenter les décisions techniques
-
-### Pièges à éviter
-- Ne pas sur-engineerer trop tôt
-- Vérifier que `rustyline` fonctionne dans tous les environnements
-- Tester les appels API réels avec une clé valide
-
-## 🔄 Dernière Mise à Jour
+### 🔄 Dernière Mise à Jour
 
 **Date** : 2026-03-21  
 **Agent** : Assistant IA  
 **Contexte** : Correction des bugs dans le streaming des tool_calls (concaténation des arguments, validation des arguments vides). Ajout de logs de débogage pour les réponses API. L'erreur "EOF while parsing a value" était due à des arguments vides ou à une réponse API malformée. Ces corrections devraient permettre aux appels d'outils de fonctionner correctement.
 
-**Prochaines étapes** : 
-1. Ajouter des tests unitaires pour les nouveaux modules
-2. Améliorer l'interface utilisateur (historique de commandes, coloration syntaxique)
-3. Supprimer le champ `max_history_messages` inutilisé (optionnel)
-4. Implémenter l'interruption pendant l'exécution de commandes shell (envoi de SIGINT au processus enfant)
-5. Tester l'appel d'outils avec une clé API valide
-
 **État du projet** : ✅ **Fonctionnel avec corrections** - Les fonctionnalités de base sont opérationnelles. Les bugs de streaming des tool_calls ont été corrigés. Des logs de débogage améliorés aident à diagnostiquer les erreurs d'API.
+
+### 🛠️ Décisions Techniques Prises
+
+#### 1. Architecture Modulaire
+- **Séparation des responsabilités** : Chaque module gère une fonctionnalité spécifique
+- **Testabilité** : Les modules peuvent être testés unitairement
+- **Maintenabilité** : Code plus lisible avec des responsabilités claires
+
+#### 2. Gestion des Tokens
+- **Estimation approximative** : Utilisation d'une heuristique basée sur le nombre de caractères
+- **Calibration automatique** : Ajustement basé sur les comptes réels retournés par l'API
+- **Redémarrage de session** : Lorsqu'il reste moins de 4000 tokens, création d'un fichier CONTINUE.md et redémarrage propre
+
+#### 3. Streaming
+- **Parsing SSE** : Traitement ligne par ligne des événements Server-Sent Events
+- **Accumulation des fragments** : Concaténation correcte des arguments JSON pour les tool_calls
+- **Interruption utilisateur** : Possibilité d'arrêter le streaming avec Échap
+
+#### 4. Sécurité
+- **Validation multi-niveaux** : Liste noire (prioritaire), liste blanche, patterns dangereux
+- **Validation sur tous les tokens** : Pas seulement le premier mot de la commande
+- **Timeout configurable** : Limitation du temps d'exécution des commandes shell
+
+#### 5. Gestion des Erreurs
+- **Retry avec backoff exponentiel** : Pour les erreurs réseau et de rate limiting
+- **Logs de débogage** : Affichage conditionnel avec variable d'environnement
+- **Interruption propre** : Gestion des signaux Ctrl+C et Échap
+
+### 📈 Prochaines Étapes
+
+1. **Tests d'intégration** : Ajouter des tests d'intégration dans le dossier `tests/`
+2. **Interface utilisateur améliorée** : Historique de commandes, coloration syntaxique
+3. **Optimisations de performance** : Réduction de la consommation mémoire, parallélisation
+4. **Fonctionnalités avancées** : Support de plusieurs outils, mode batch
+5. **Documentation API** : Documentation détaillée des modules internes
+
+### 💡 Notes pour les Agents Futurs
+
+#### À garder en tête
+- L'utilisateur ne veut pas de Docker pour le moment (mais les fichiers Docker sont présents)
+- Priorité : fonctionnalité de base avant optimisations
+- Garder le code simple et lisible
+- Documenter les décisions techniques
+
+#### Pièges à éviter
+- Ne pas sur-engineerer trop tôt
+- Vérifier que `rustyline` fonctionne dans tous les environnements
+- Tester les appels API réels avec une clé valide
+- Les tool_calls en streaming nécessitent une accumulation correcte des fragments d'arguments
+
+#### Bonnes pratiques
+- Toujours ajouter des tests unitaires pour les nouvelles fonctionnalités
+- Mettre à jour AGENTS.md après chaque session de travail significative
+- Vérifier la compilation avec `cargo check` avant de proposer des modifications
+- Utiliser les variables d'environnement pour la configuration plutôt que du code dur
 
 ---
 
