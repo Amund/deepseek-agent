@@ -27,8 +27,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             config.api_key.clone(),
             config.model.clone(),
             config.system_prompt.clone(),
-
-            config.max_history_messages,
             max_context_tokens,
             config.debug,
             config.max_retries,

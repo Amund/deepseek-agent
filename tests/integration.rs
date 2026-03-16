@@ -136,7 +136,7 @@ async fn test_shell_execution_with_timeout() {
 fn test_history_calibration() {
 
     
-    let mut history = HistoryManager::new(None, Some(10000), false);
+    let mut history = HistoryManager::new(Some(10000), false);
     
     // Ajouter quelques messages
     history.add_message(Message {

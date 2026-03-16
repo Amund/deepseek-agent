@@ -7,15 +7,12 @@ pub struct HistoryManager {
     pub token_calibration_factor: f32,
     pub total_real_tokens_observed: u32,
     pub total_estimated_tokens: u32,
-    #[allow(dead_code)]
-    pub max_history_messages: Option<usize>,
     pub max_context_tokens: Option<u32>,
     pub debug: bool,
 }
 
 impl HistoryManager {
     pub fn new(
-        max_history_messages: Option<usize>,
         max_context_tokens: Option<u32>,
         debug: bool,
     ) -> Self {
@@ -25,7 +22,6 @@ impl HistoryManager {
             token_calibration_factor: 1.0,
             total_real_tokens_observed: 0,
             total_estimated_tokens: 0,
-            max_history_messages,
             max_context_tokens,
             debug,
         }
@@ -171,17 +167,16 @@ mod tests {
 
     #[test]
     fn test_history_manager_new() {
-        let hm = HistoryManager::new(Some(10), Some(1000), false);
+        let hm = HistoryManager::new(Some(1000), false);
         assert_eq!(hm.messages.len(), 0);
         assert_eq!(hm.total_tokens, 0);
         assert_eq!(hm.token_calibration_factor, 1.0);
-        assert_eq!(hm.max_history_messages, Some(10));
         assert_eq!(hm.max_context_tokens, Some(1000));
     }
 
     #[test]
     fn test_add_message() {
-        let mut hm = HistoryManager::new(None, None, false);
+        let mut hm = HistoryManager::new(None, false);
         let message = Message {
             role: "user".to_string(),
             content: "Hello".to_string(),
@@ -198,7 +193,7 @@ mod tests {
 
     #[test]
     fn test_add_multiple_messages() {
-        let mut hm = HistoryManager::new(None, None, false);
+        let mut hm = HistoryManager::new(None, false);
         for i in 0..3 {
             let message = Message {
                 role: "user".to_string(),
@@ -217,7 +212,7 @@ mod tests {
 
     #[test]
     fn test_estimate_and_set_tokens() {
-        let mut hm = HistoryManager::new(None, None, false);
+        let mut hm = HistoryManager::new(None, false);
         let mut message = Message {
             role: "user".to_string(),
             content: "Hello world".to_string(),
@@ -235,7 +230,7 @@ mod tests {
 
     #[test]
     fn test_calibrate_with_response() {
-        let mut hm = HistoryManager::new(None, None, false);
+        let mut hm = HistoryManager::new(None, false);
         // Ajouter un message pour avoir un historique
         let message = Message {
             role: "user".to_string(),
@@ -295,11 +290,11 @@ mod tests {
     #[test]
     fn test_should_restart_session() {
         // Cas sans limite de tokens
-        let hm = HistoryManager::new(None, None, false);
+        let hm = HistoryManager::new(None, false);
         assert!(!hm.should_restart_session());
         
         // Cas avec limite mais assez de tokens restants
-        let mut hm = HistoryManager::new(None, Some(10000), false);
+        let mut hm = HistoryManager::new(Some(10000), false);
         // Simuler un total_tokens de 1000
         hm.total_tokens = 1000;
         assert!(!hm.should_restart_session()); // 9000 restants > 4000

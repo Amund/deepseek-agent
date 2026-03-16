@@ -40,7 +40,6 @@ pub struct Config {
     pub model: Option<String>,
     pub system_prompt: Option<String>,
 
-    pub max_history_messages: Option<usize>,
     pub max_context_tokens: Option<u32>,
     pub debug: bool,
     pub max_retries: Option<u32>,
@@ -149,11 +148,6 @@ impl Config {
 
 
 
-        // Limite d'historique (messages)
-        let max_history_messages = env::var("DEEPSEEK_AGENT_MAX_HISTORY_MESSAGES")
-            .ok()
-            .and_then(|s| s.parse::<usize>().ok());
-
         // Limite de contexte (tokens)
         let max_context_tokens = env::var("DEEPSEEK_AGENT_MAX_CONTEXT_TOKENS")
             .ok()
@@ -186,7 +180,6 @@ impl Config {
             model,
             system_prompt,
 
-            max_history_messages,
             max_context_tokens,
             debug,
             max_retries,

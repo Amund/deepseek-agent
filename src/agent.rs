@@ -27,8 +27,6 @@ impl Agent {
         api_key: String,
         model: Option<String>,
         system_prompt: Option<String>,
-
-        max_history_messages: Option<usize>,
         max_context_tokens: Option<u32>,
         debug: bool,
         max_retries: Option<u32>,
@@ -55,7 +53,7 @@ impl Agent {
                 max_retry_delay_ms_val,
                 base_url,
             ),
-            history: HistoryManager::new(max_history_messages, max_context_tokens, debug),
+            history: HistoryManager::new(max_context_tokens, debug),
             system_prompt,
 
             shell_executor: ShellExecutor::new(shell_timeout_ms),
@@ -146,7 +144,7 @@ impl Agent {
 
 
 
-                    println!("{}", self.formatter.shell_command_message(&format!("{}", command)));
+                    println!("{}", self.formatter.shell_command_message(&command));
                     let output = self.shell_executor.exec(&command).await;
 
                     // Ajouter le résultat à la liste
@@ -328,7 +326,6 @@ mod tests {
             "test_key".to_string(),
             Some("deepseek-chat".to_string()),
             Some("Test system prompt".to_string()),
-            Some(10),
             Some(10000),
             false,
             Some(3),
@@ -351,7 +348,6 @@ mod tests {
             None,
             None,
             None,
-            None,
             false,
             None,
             None,
@@ -371,7 +367,6 @@ mod tests {
         // On peut vérifier qu'elle ne panique pas.
         let agent = Agent::new(
             "test_key".to_string(),
-            None,
             None,
             None,
             None,
@@ -400,7 +395,6 @@ mod tests {
         // On peut tester avec un agent qui a un historique vide
         let agent = Agent::new(
             "test_key".to_string(),
-            None,
             None,
             None,
             None,

@@ -15,7 +15,6 @@ Conçu pour être **léger, modulaire et extensible**. L'agent dispose d'un seul
 - **Gestion des interruptions** :
   - **Ctrl+C** : Interrompt un traitement en cours et quitte l'application
   - **Échap** : Interrompt le streaming d'une réponse
-
 - **Gestion robuste des erreurs** :
   - Retry automatique avec backoff exponentiel pour les appels API
   - Logs de débogage détaillés
@@ -33,7 +32,6 @@ Le projet est organisé en modules Rust spécialisés :
 - **config.rs** : Chargement de la configuration depuis les variables d'environnement
 - **history.rs** : Gestion de l'historique des messages, estimation des tokens, calibration
 - **interrupt.rs** : Gestion des interruptions (Ctrl+C, touche Échap)
-
 - **session.rs** : Redémarrage de session et création du fichier CONTINUE.md
 - **shell.rs** : Exécution des commandes shell avec timeout
 - **streaming.rs** : Traitement des réponses streaming (ToolCallBuilder, parsing SSE)
@@ -115,7 +113,6 @@ Toutes les options sont configurables via variables d'environnement :
 | `DEEPSEEK_API_KEY` | Clé API DeepSeek (requise) | - |
 | `DEEPSEEK_AGENT_MODEL` | Modèle à utiliser (deepseek-chat, deepseek-reasoner, etc.) | `deepseek-chat` |
 | `DEEPSEEK_AGENT_SYSTEM_PROMPT` | Prompt système personnalisé | Voir le code source |
-| `DEEPSEEK_AGENT_MAX_HISTORY_MESSAGES` | Nombre max de messages dans l'historique | Illimité |
 | `DEEPSEEK_AGENT_MAX_CONTEXT_TOKENS` | Nombre max de tokens dans le contexte | Dépend du modèle :<br>- deepseek-chat: 128k<br>- deepseek-reasoner: 128k<br>- autres: 32k |
 | `DEEPSEEK_AGENT_DEBUG` | Activer les logs de debug | Désactivé |
 | `DEEPSEEK_AGENT_MAX_RETRIES` | Nombre maximum de tentatives pour les appels API | `3` |
@@ -132,7 +129,6 @@ Exemple de configuration complète :
 export DEEPSEEK_API_KEY=votre_clé
 export DEEPSEEK_AGENT_MODEL=deepseek-chat
 export DEEPSEEK_AGENT_SYSTEM_PROMPT="Tu es un assistant spécialisé en DevOps."
-export DEEPSEEK_AGENT_MAX_HISTORY_MESSAGES=20
 export DEEPSEEK_AGENT_MAX_CONTEXT_TOKENS=28000  # Défaut dépend du modèle (voir documentation)
 export DEEPSEEK_AGENT_DEBUG=1
 export DEEPSEEK_AGENT_MAX_RETRIES=3              # Nombre maximum de tentatives pour les appels API

@@ -121,6 +121,8 @@ deepseek-agent/
 **Agent** : Assistant IA  
 **Contexte** : Suppression de l'historique persistant des commandes pour respecter le contrat de départ (programme léger et sans persistance). Conservation de la coloration syntaxique via le module `ui.rs` avec gestion des couleurs (variables DEEPSEEK_AGENT_NO_COLOR et DEEPSEEK_AGENT_COLOR). Amélioration de l'affichage des messages (agent, shell, erreurs) avec des couleurs.
 
+**Suppression de `max_history_messages`** : Cette variable d'environnement était un reliquat d'une ancienne fonctionnalité. La gestion du contexte repose désormais entièrement sur le calcul des tokens (`max_context_tokens`). La variable a été retirée du code, de la configuration et de la documentation.
+
 **État du projet** : ✅ **Fonctionnel et bien testé** - Les fonctionnalités de base sont opérationnelles avec des tests unitaires et d'intégration. Le code est structuré en librairie et binaire pour une meilleure maintenabilité. L'interface utilisateur offre une expérience améliorée avec couleurs, sans persistance pour rester léger.
 
 ### 🛠️ Décisions Techniques Prises
@@ -140,8 +142,6 @@ deepseek-agent/
 - **Accumulation des fragments** : Concaténation correcte des arguments JSON pour les tool_calls
 - **Interruption utilisateur** : Possibilité d'arrêter le streaming avec Échap
 
-
-
 #### 4. Gestion des Erreurs
 - **Retry avec backoff exponentiel** : Pour les erreurs réseau et de rate limiting
 - **Logs de débogage** : Affichage conditionnel avec variable d'environnement
@@ -149,11 +149,50 @@ deepseek-agent/
 
 ### 📈 Prochaines Étapes
 
-1. **Tests d'intégration** : ✅ Complété
-2. **Interface utilisateur améliorée** : ✅ Complété
-3. **Optimisations de performance** : Réduction de la consommation mémoire, parallélisation
-4. **Fonctionnalités avancées** : Support de plusieurs outils, mode batch
-5. **Documentation API** : Documentation détaillée des modules internes
+- **Fonctionnalités avancées** : Support de plusieurs outils, mode batch
+- **Documentation API** : Documentation détaillée des modules internes
+
+### 🔍 Analyse des Optimisations Possibles (2026-03-23)
+
+**Contexte** : L'agent est actuellement fonctionnel avec des performances adéquates pour un usage interactif. Les goulots d'étranglement principaux sont les appels réseau (API DeepSeek) et l'exécution des commandes shell, pas le traitement local.
+
+#### Optimisations potentielles identifiées :
+
+1. **Parallélisation des tool_calls** :
+   - **Utilité** : Modérée. Permettrait d'exécuter plusieurs commandes shell simultanément quand l'assistant envoie plusieurs tool_calls dans un seul message.
+   - **Complexité** : Moyenne. Nécessite de gérer la concurrence et de préserver l'ordre des résultats.
+   - **Risque** : Les commandes pourraient avoir des dépendances (ex: `cd` puis `ls`). Cependant, l'assistant peut les envoyer séquentiellement s'il a besoin d'ordre.
+   - **Recommandation** : Implémenter optionnellement avec une variable d'environnement `DEEPSEEK_AGENT_PARALLEL_TOOL_CALLS`.
+
+2. **Réduction de la consommation mémoire** :
+        - **Utilité** : Faible. L'historique est limité par `max_context_tokens`. Les messages ne contiennent pas de données volumineuses.
+   - **Optimisations possibles** :
+     - Utiliser `Box<str>` au lieu de `String` pour les champs de message (micro-optimisation).
+     - Compresser les messages anciens (trop complexe).
+   - **Recommandation** : Aucune action nécessaire.
+
+3. **Optimisation du streaming** :
+   - **Utilité** : Faible à modérée. Le streaming affiche caractère par caractère, ce qui peut être lent pour des réponses longues.
+   - **Optimisations possibles** :
+     - Bufferisation de l'affichage (afficher par lignes ou par blocs de N caractères).
+     - Réutilisation des buffers pour réduire les allocations.
+     - Travailler directement avec les bytes au lieu de convertir en UTF-8 à chaque chunk.
+   - **Recommandation** : Implémenter un buffer d'affichage configurable (ex: 1024 caractères).
+
+4. **Réduction des clones inutiles** :
+   - **Utilité** : Faible. Les clones identifiés sont nécessaires pour la propriété des données. Quelques clones pourraient être évités avec des références ou des prises de possession.
+   - **Recommandation** : Revue de code pour éliminer quelques clones évidents, mais impact minimal.
+
+5. **Cache des estimations de tokens** :
+   - **Utilité** : Très faible. L'estimation des tokens est une opération peu coûteuse (comptage de caractères).
+   - **Recommandation** : Aucune action.
+
+**Conclusion** :
+- Les optimisations de performance ne sont pas critiques pour le moment.
+- La priorité devrait rester sur les fonctionnalités avancées et la robustesse.
+- Si des optimisations sont implémentées, elles devraient être optionnelles et mesurables.
+
+**Décision** : Reporter les optimisations de performance au profit des fonctionnalités avancées (support de plusieurs outils, mode batch). Documenter cette analyse pour référence future.
 
 ### 💡 Notes pour les Agents Futurs
 
