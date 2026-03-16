@@ -7,15 +7,7 @@ pub const DEFAULT_MAX_RETRIES: u32 = 3;
 pub const DEFAULT_RETRY_DELAY_MS: u64 = 1000;
 pub const DEFAULT_MAX_RETRY_DELAY_MS: u64 = 30000;
 
-// Fonction helper pour parser les variables d'environnement CSV
-pub fn parse_csv_env_var(var_name: &str) -> Option<Vec<String>> {
-    env::var(var_name).ok().map(|s| {
-        s.split(',')
-            .map(|item| item.trim().to_string())
-            .filter(|item| !item.is_empty())
-            .collect()
-    })
-}
+
 
 // Fonction helper pour lire un fichier s'il existe, avec une limite de taille optionnelle
 pub fn load_file_if_exists(filepath: &str, max_size: Option<usize>) -> Option<String> {
@@ -47,8 +39,7 @@ pub struct Config {
     pub api_key: String,
     pub model: Option<String>,
     pub system_prompt: Option<String>,
-    pub whitelist: Option<Vec<String>>,
-    pub blacklist: Option<Vec<String>>,
+
     pub max_history_messages: Option<usize>,
     pub max_context_tokens: Option<u32>,
     pub debug: bool,
@@ -156,9 +147,7 @@ impl Config {
             println!("[Debug] Chargement des fichiers de contexte désactivé (DEEPSEEK_AGENT_SKIP_CONTEXT_FILES)");
         }
 
-        // Listes CSV
-        let whitelist = parse_csv_env_var("DEEPSEEK_AGENT_WHITELIST");
-        let blacklist = parse_csv_env_var("DEEPSEEK_AGENT_BLACKLIST");
+
 
         // Limite d'historique (messages)
         let max_history_messages = env::var("DEEPSEEK_AGENT_MAX_HISTORY_MESSAGES")
@@ -196,8 +185,7 @@ impl Config {
             api_key,
             model,
             system_prompt,
-            whitelist,
-            blacklist,
+
             max_history_messages,
             max_context_tokens,
             debug,

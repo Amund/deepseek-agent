@@ -15,10 +15,7 @@ Conçu pour être **léger, modulaire et extensible**. L'agent dispose d'un seul
 - **Gestion des interruptions** :
   - **Ctrl+C** : Interrompt un traitement en cours et quitte l'application
   - **Échap** : Interrompt le streaming d'une réponse
-- **Sécurité avancée** :
-  - Listes blanche/noire configurables via variables d'environnement (CSV)
-  - Validation sur tous les tokens des commandes
-  - Détection de patterns dangereux (injection de commandes)
+
 - **Gestion robuste des erreurs** :
   - Retry automatique avec backoff exponentiel pour les appels API
   - Logs de débogage détaillés
@@ -36,7 +33,7 @@ Le projet est organisé en modules Rust spécialisés :
 - **config.rs** : Chargement de la configuration depuis les variables d'environnement
 - **history.rs** : Gestion de l'historique des messages, estimation des tokens, calibration
 - **interrupt.rs** : Gestion des interruptions (Ctrl+C, touche Échap)
-- **security.rs** : Validation des commandes shell (listes blanche/noire, patterns dangereux)
+
 - **session.rs** : Redémarrage de session et création du fichier CONTINUE.md
 - **shell.rs** : Exécution des commandes shell avec timeout
 - **streaming.rs** : Traitement des réponses streaming (ToolCallBuilder, parsing SSE)
@@ -118,10 +115,8 @@ Toutes les options sont configurables via variables d'environnement :
 | `DEEPSEEK_API_KEY` | Clé API DeepSeek (requise) | - |
 | `DEEPSEEK_AGENT_MODEL` | Modèle à utiliser (deepseek-chat, deepseek-reasoner, etc.) | `deepseek-chat` |
 | `DEEPSEEK_AGENT_SYSTEM_PROMPT` | Prompt système personnalisé | Voir le code source |
-| `DEEPSEEK_AGENT_WHITELIST` | Liste blanche de commandes (CSV) | Toutes autorisées |
-| `DEEPSEEK_AGENT_BLACKLIST` | Liste noire de commandes (CSV) | Aucune interdite |
 | `DEEPSEEK_AGENT_MAX_HISTORY_MESSAGES` | Nombre max de messages dans l'historique | Illimité |
-| `DEEPSEEK_AGENT_MAX_CONTEXT_TOKENS` | Nombre max de tokens dans le contexte | Dépend du modèle :<br>- deepseek-chat: ~112 000<br>- deepseek-reasoner: ~104 000<br>- autres: 28 000 |
+| `DEEPSEEK_AGENT_MAX_CONTEXT_TOKENS` | Nombre max de tokens dans le contexte | Dépend du modèle :<br>- deepseek-chat: 128k<br>- deepseek-reasoner: 128k<br>- autres: 32k |
 | `DEEPSEEK_AGENT_DEBUG` | Activer les logs de debug | Désactivé |
 | `DEEPSEEK_AGENT_MAX_RETRIES` | Nombre maximum de tentatives pour les appels API | `3` |
 | `DEEPSEEK_AGENT_RETRY_DELAY_MS` | Délai initial entre les tentatives (ms) | `1000` |
@@ -137,8 +132,6 @@ Exemple de configuration complète :
 export DEEPSEEK_API_KEY=votre_clé
 export DEEPSEEK_AGENT_MODEL=deepseek-chat
 export DEEPSEEK_AGENT_SYSTEM_PROMPT="Tu es un assistant spécialisé en DevOps."
-export DEEPSEEK_AGENT_WHITELIST="ls,cat,echo,grep,find"
-export DEEPSEEK_AGENT_BLACKLIST="rm,shutdown,reboot"
 export DEEPSEEK_AGENT_MAX_HISTORY_MESSAGES=20
 export DEEPSEEK_AGENT_MAX_CONTEXT_TOKENS=28000  # Défaut dépend du modèle (voir documentation)
 export DEEPSEEK_AGENT_DEBUG=1

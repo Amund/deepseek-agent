@@ -7,7 +7,6 @@ use crate::api_client::ApiClient;
 use crate::config::{DEFAULT_MAX_RETRIES, DEFAULT_MAX_RETRY_DELAY_MS, DEFAULT_RETRY_DELAY_MS};
 use crate::history::HistoryManager;
 use crate::interrupt;
-use crate::security::Security;
 use crate::session::{self, RestartSessionError};
 use crate::shell::ShellExecutor;
 
@@ -15,7 +14,6 @@ pub struct Agent {
     api_client: ApiClient,
     history: HistoryManager,
     system_prompt: Option<String>,
-    security: Security,
     shell_executor: ShellExecutor,
     model: String,
     debug: bool,
@@ -27,8 +25,7 @@ impl Agent {
         api_key: String,
         model: Option<String>,
         system_prompt: Option<String>,
-        whitelist: Option<Vec<String>>,
-        blacklist: Option<Vec<String>>,
+
         max_history_messages: Option<usize>,
         max_context_tokens: Option<u32>,
         debug: bool,
@@ -58,7 +55,7 @@ impl Agent {
             ),
             history: HistoryManager::new(max_history_messages, max_context_tokens, debug),
             system_prompt,
-            security: Security::new(whitelist, blacklist),
+
             shell_executor: ShellExecutor::new(shell_timeout_ms),
             model: model_str,
             debug,
@@ -144,17 +141,7 @@ impl Agent {
                     };
                     let command = args["command"].as_str().unwrap_or("").to_string();
 
-                    // Vérification de sécurité
-                    if let Err(error_msg) = self.security.validate_command(&command) {
-                        tool_results.push(Message {
-                            role: "tool".into(),
-                            content: error_msg,
-                            tool_calls: None,
-                            tool_call_id: Some(tool_call.id.clone()),
-                            token_count: None,
-                        });
-                        continue;
-                    }
+
 
                     println!("[Shell] Exécution : {}", command);
                     let output = self.shell_executor.exec(&command).await;
@@ -338,8 +325,6 @@ mod tests {
             "test_key".to_string(),
             Some("deepseek-chat".to_string()),
             Some("Test system prompt".to_string()),
-            Some(vec!["ls".to_string()]),
-            Some(vec!["rm".to_string()]),
             Some(10),
             Some(10000),
             false,
@@ -364,8 +349,6 @@ mod tests {
             None,
             None,
             None,
-            None,
-            None,
             false,
             None,
             None,
@@ -385,8 +368,6 @@ mod tests {
         // On peut vérifier qu'elle ne panique pas.
         let agent = Agent::new(
             "test_key".to_string(),
-            None,
-            None,
             None,
             None,
             None,
@@ -416,8 +397,6 @@ mod tests {
         // On peut tester avec un agent qui a un historique vide
         let agent = Agent::new(
             "test_key".to_string(),
-            None,
-            None,
             None,
             None,
             None,

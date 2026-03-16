@@ -5,7 +5,7 @@ mod api_client;
 mod config;
 mod history;
 mod interrupt;
-mod security;
+
 mod session;
 mod shell;
 mod streaming;
@@ -40,8 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             config.api_key.clone(),
             config.model.clone(),
             config.system_prompt.clone(),
-            config.whitelist.clone(),
-            config.blacklist.clone(),
+
             config.max_history_messages,
             max_context_tokens,
             config.debug,

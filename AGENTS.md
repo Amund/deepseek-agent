@@ -21,7 +21,6 @@ Le code a été refactorisé en modules spécialisés pour améliorer la mainten
 - **config.rs** : Chargement de la configuration depuis les variables d'environnement
 - **history.rs** : Gestion de l'historique des messages, estimation des tokens, calibration
 - **interrupt.rs** : Gestion des interruptions (Ctrl+C, touche Échap)
-- **security.rs** : Validation des commandes shell (listes blanche/noire, patterns dangereux)
 - **session.rs** : Redémarrage de session et création du fichier CONTINUE.md
 - **shell.rs** : Exécution des commandes shell avec timeout
 - **streaming.rs** : Traitement des réponses streaming (ToolCallBuilder, parsing SSE)
@@ -39,7 +38,6 @@ deepseek-agent/
 │   ├── config.rs          # Configuration
 │   ├── history.rs         # Gestion historique
 │   ├── interrupt.rs       # Gestion interruptions
-│   ├── security.rs        # Validation sécurité
 │   ├── session.rs         # Redémarrage session
 │   ├── shell.rs           # Exécution shell
 │   ├── streaming.rs       # Traitement streaming
@@ -73,15 +71,12 @@ deepseek-agent/
 7. **Gestion des interruptions** :
    - Ctrl+C pour arrêter un traitement et quitter l'application
    - Touche Échap pour interrompre le streaming d'une réponse
-8. **Sécurité configurable** :
-   - Listes blanche/noire de commandes (CSV via variables d'environnement)
-   - Détection de patterns dangereux
-   - Validation sur tous les tokens des commandes
-9. **Gestion robuste des erreurs** :
+
+8. **Gestion robuste des erreurs** :
    - Retry automatique avec backoff exponentiel
    - Timeout configurable pour les commandes shell
    - Logs de débogage détaillés
-10. **Support des tool_calls en streaming** : Accumulation correcte des fragments d'arguments JSON
+9. **Support des tool_calls en streaming** : Accumulation correcte des fragments d'arguments JSON
 
 ### 🔧 Configuration avancée
 
@@ -113,14 +108,15 @@ deepseek-agent/
 - [x] Correction des bugs dans le streaming des tool_calls (concaténation des arguments, validation des arguments vides)
 - [x] Ajout de logs de débogage pour les réponses API
 - [x] Tests unitaires pour les nouveaux modules
+- [x] Suppression de la validation de sécurité (listes blanche/noire, patterns dangereux)
 
 ### 🔄 Dernière Mise à Jour
 
-**Date** : 2026-03-21  
+**Date** : 2026-03-22  
 **Agent** : Assistant IA  
-**Contexte** : Correction des bugs dans le streaming des tool_calls (concaténation des arguments, validation des arguments vides). Ajout de logs de débogage pour les réponses API. L'erreur "EOF while parsing a value" était due à des arguments vides ou à une réponse API malformée. Ces corrections devraient permettre aux appels d'outils de fonctionner correctement.
+**Contexte** : Suppression de la validation de sécurité des commandes shell (listes blanche/noire, patterns dangereux). Cette validation était inutilement lourde et le programme est destiné à être utilisé dans un conteneur Docker, où la sécurité est assurée par le conteneur. Toutes les références à la sécurité ont été retirées du code et de la documentation.
 
-**État du projet** : ✅ **Fonctionnel avec corrections** - Les fonctionnalités de base sont opérationnelles. Les bugs de streaming des tool_calls ont été corrigés. Des logs de débogage améliorés aident à diagnostiquer les erreurs d'API.
+**État du projet** : ✅ **Fonctionnel et simplifié** - Les fonctionnalités de base sont opérationnelles sans validation superflue. Le code est plus simple et maintenable. Tous les tests passent avec succès.
 
 ### 🛠️ Décisions Techniques Prises
 
@@ -139,12 +135,9 @@ deepseek-agent/
 - **Accumulation des fragments** : Concaténation correcte des arguments JSON pour les tool_calls
 - **Interruption utilisateur** : Possibilité d'arrêter le streaming avec Échap
 
-#### 4. Sécurité
-- **Validation multi-niveaux** : Liste noire (prioritaire), liste blanche, patterns dangereux
-- **Validation sur tous les tokens** : Pas seulement le premier mot de la commande
-- **Timeout configurable** : Limitation du temps d'exécution des commandes shell
 
-#### 5. Gestion des Erreurs
+
+#### 4. Gestion des Erreurs
 - **Retry avec backoff exponentiel** : Pour les erreurs réseau et de rate limiting
 - **Logs de débogage** : Affichage conditionnel avec variable d'environnement
 - **Interruption propre** : Gestion des signaux Ctrl+C et Échap
