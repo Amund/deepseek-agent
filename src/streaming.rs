@@ -238,3 +238,180 @@ impl StreamProcessor {
         Ok(response)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::*;
+
+    #[test]
+    fn test_tool_call_builder_default() {
+        let mut builder = ToolCallBuilder::default();
+        assert!(builder.index.is_none());
+        assert!(builder.id.is_none());
+        assert!(builder.call_type.is_none());
+        assert!(builder.function_name.is_none());
+        assert!(builder.function_arguments.is_none());
+        assert!(!builder.converted);
+        assert!(!builder.is_complete());
+        assert!(builder.to_tool_call().is_none());
+    }
+
+    #[test]
+    fn test_tool_call_builder_update_from_delta() {
+        let mut builder = ToolCallBuilder::default();
+        let delta = ToolCallDelta {
+            index: Some(0),
+            id: Some("call_123".to_string()),
+            call_type: Some("function".to_string()),
+            function: Some(FunctionCallDelta {
+                name: Some("sh".to_string()),
+                arguments: Some("{\"command\": \"ls\"}".to_string()),
+            }),
+        };
+        builder.update_from_delta(&delta);
+        assert_eq!(builder.index, Some(0));
+        assert_eq!(builder.id, Some("call_123".to_string()));
+        assert_eq!(builder.call_type, Some("function".to_string()));
+        assert_eq!(builder.function_name, Some("sh".to_string()));
+        assert_eq!(builder.function_arguments, Some("{\"command\": \"ls\"}".to_string()));
+        assert!(builder.is_complete());
+        assert!(!builder.converted);
+    }
+
+    #[test]
+    fn test_tool_call_builder_to_tool_call() {
+        let mut builder = ToolCallBuilder::default();
+        builder.id = Some("call_123".to_string());
+        builder.call_type = Some("function".to_string());
+        builder.function_name = Some("sh".to_string());
+        builder.function_arguments = Some("{\"command\": \"ls\"}".to_string());
+        assert!(builder.is_complete());
+        let tool_call = builder.to_tool_call();
+        assert!(tool_call.is_some());
+        let tool_call = tool_call.unwrap();
+        assert_eq!(tool_call.id, "call_123");
+        assert_eq!(tool_call.call_type, "function");
+        assert_eq!(tool_call.function.name, "sh");
+        assert_eq!(tool_call.function.arguments, "{\"command\": \"ls\"}");
+        // Après conversion, le builder est marqué comme converted
+        assert!(builder.converted);
+        // Et ne peut plus être reconverti
+        assert!(builder.to_tool_call().is_none());
+    }
+
+    #[test]
+    fn test_tool_call_builder_partial_updates() {
+        let mut builder = ToolCallBuilder::default();
+        // Première delta avec seulement l'index et l'ID
+        let delta1 = ToolCallDelta {
+            index: Some(0),
+            id: Some("call_123".to_string()),
+            call_type: None,
+            function: None,
+        };
+        builder.update_from_delta(&delta1);
+        assert!(!builder.is_complete());
+        // Deuxième delta avec le type
+        let delta2 = ToolCallDelta {
+            index: None,
+            id: None,
+            call_type: Some("function".to_string()),
+            function: None,
+        };
+        builder.update_from_delta(&delta2);
+        assert!(!builder.is_complete());
+        // Troisième delta avec le nom de fonction
+        let delta3 = ToolCallDelta {
+            index: None,
+            id: None,
+            call_type: None,
+            function: Some(FunctionCallDelta {
+                name: Some("sh".to_string()),
+                arguments: None,
+            }),
+        };
+        builder.update_from_delta(&delta3);
+        assert!(!builder.is_complete());
+        // Quatrième delta avec les arguments
+        let delta4 = ToolCallDelta {
+            index: None,
+            id: None,
+            call_type: None,
+            function: Some(FunctionCallDelta {
+                name: None,
+                arguments: Some("{\"command\": \"ls\"}".to_string()),
+            }),
+        };
+        builder.update_from_delta(&delta4);
+        assert!(builder.is_complete());
+        assert!(!builder.converted);
+        let tool_call = builder.to_tool_call();
+        assert!(tool_call.is_some());
+        let tool_call = tool_call.unwrap();
+        assert_eq!(tool_call.id, "call_123");
+        assert_eq!(tool_call.call_type, "function");
+        assert_eq!(tool_call.function.name, "sh");
+        assert_eq!(tool_call.function.arguments, "{\"command\": \"ls\"}");
+    }
+
+    #[test]
+    fn test_tool_call_builder_multiple_indexes() {
+        let mut builders = vec![ToolCallBuilder::default(), ToolCallBuilder::default()];
+        // Premier tool_call (index 0)
+        let delta1 = ToolCallDelta {
+            index: Some(0),
+            id: Some("call_123".to_string()),
+            call_type: Some("function".to_string()),
+            function: Some(FunctionCallDelta {
+                name: Some("sh".to_string()),
+                arguments: Some("{\"command\": \"ls\"}".to_string()),
+            }),
+        };
+        builders[0].update_from_delta(&delta1);
+        assert!(builders[0].is_complete());
+        // Deuxième tool_call (index 1)
+        let delta2 = ToolCallDelta {
+            index: Some(1),
+            id: Some("call_456".to_string()),
+            call_type: Some("function".to_string()),
+            function: Some(FunctionCallDelta {
+                name: Some("sh".to_string()),
+                arguments: Some("{\"command\": \"pwd\"}".to_string()),
+            }),
+        };
+        builders[1].update_from_delta(&delta2);
+        assert!(builders[1].is_complete());
+    }
+
+    #[test]
+    fn test_tool_call_builder_converted_prevents_updates() {
+        let mut builder = ToolCallBuilder::default();
+        builder.id = Some("call_123".to_string());
+        builder.call_type = Some("function".to_string());
+        builder.function_name = Some("sh".to_string());
+        builder.function_arguments = Some("{\"command\": \"ls\"}".to_string());
+        let _ = builder.to_tool_call(); // marque comme converted
+        assert!(builder.converted);
+        // Essayer de mettre à jour après conversion ne fait rien
+        let delta = ToolCallDelta {
+            index: Some(1),
+            id: Some("call_456".to_string()),
+            call_type: Some("function".to_string()),
+            function: Some(FunctionCallDelta {
+                name: Some("sh".to_string()),
+                arguments: Some("{\"command\": \"pwd\"}".to_string()),
+            }),
+        };
+        builder.update_from_delta(&delta);
+        // Les champs restent inchangés
+        assert_eq!(builder.id, Some("call_123".to_string()));
+        assert_eq!(builder.call_type, Some("function".to_string()));
+        assert_eq!(builder.function_name, Some("sh".to_string()));
+        assert_eq!(builder.function_arguments, Some("{\"command\": \"ls\"}".to_string()));
+    }
+
+    // Note: les tests pour StreamProcessor.process_response nécessitent des mocks HTTP,
+    // ce qui est plus complexe. On peut les ajouter plus tard avec un crate comme mockito.
+    // Pour l'instant, on se concentre sur les tests unitaires des structures.
+}

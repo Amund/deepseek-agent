@@ -36,6 +36,13 @@ impl ApiClient {
         }
     }
 
+    // Calcule le délai de retry pour une tentative donnée
+    fn calculate_retry_delay(&self, attempt: u32) -> u64 {
+        let multiplier = 2u64.checked_pow(attempt).unwrap_or(u64::MAX);
+        let delay = self.retry_delay_ms.checked_mul(multiplier).unwrap_or(u64::MAX);
+        std::cmp::min(delay, self.max_retry_delay_ms)
+    }
+
     // Effectue un appel à l'API DeepSeek avec gestion des retries
     pub async fn call(
         &self,
@@ -127,11 +134,7 @@ impl ApiClient {
 
             // Si ce n'est pas la dernière tentative, attendre avant de retry
             if attempt < self.max_retries {
-                // Backoff exponentiel avec délai maximum
-                let delay_ms = std::cmp::min(
-                    self.retry_delay_ms * 2u64.pow(attempt),
-                    self.max_retry_delay_ms,
-                );
+                let delay_ms = self.calculate_retry_delay(attempt);
                 if self.debug {
                     println!("[Debug] Retrying in {} ms...", delay_ms);
                 }
@@ -142,4 +145,91 @@ impl ApiClient {
         // Si on arrive ici, toutes les tentatives ont échoué
         Err(last_error.unwrap_or_else(|| "Unknown error".into()))
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_api_client_new() {
+        let client = ApiClient::new(
+            "test_key".to_string(),
+            Some("deepseek-chat".to_string()),
+            false,
+            false,
+            3,
+            100,
+            1000,
+        );
+        assert_eq!(client.api_key, "test_key");
+        assert_eq!(client.model, "deepseek-chat");
+        assert!(!client.stream);
+        assert!(!client.debug);
+        assert_eq!(client.max_retries, 3);
+        assert_eq!(client.retry_delay_ms, 100);
+        assert_eq!(client.max_retry_delay_ms, 1000);
+    }
+
+    #[test]
+    fn test_api_client_new_default_model() {
+        let client = ApiClient::new(
+            "test_key".to_string(),
+            None,
+            false,
+            false,
+            3,
+            100,
+            1000,
+        );
+        assert_eq!(client.model, "deepseek-chat");
+    }
+
+    #[test]
+    fn test_calculate_retry_delay() {
+        let client = ApiClient::new(
+            "test_key".to_string(),
+            None,
+            false,
+            false,
+            3,
+            100,
+            1000,
+        );
+        // Tentative 0: 100 * 2^0 = 100
+        assert_eq!(client.calculate_retry_delay(0), 100);
+        // Tentative 1: 100 * 2^1 = 200
+        assert_eq!(client.calculate_retry_delay(1), 200);
+        // Tentative 2: 100 * 2^2 = 400
+        assert_eq!(client.calculate_retry_delay(2), 400);
+        // Tentative 3: 100 * 2^3 = 800
+        assert_eq!(client.calculate_retry_delay(3), 800);
+        // Tentative 4: 100 * 2^4 = 1600, mais limité à max_retry_delay_ms = 1000
+        assert_eq!(client.calculate_retry_delay(4), 1000);
+        // Tentative 10: toujours limité à 1000
+        assert_eq!(client.calculate_retry_delay(10), 1000);
+    }
+
+    #[test]
+    fn test_calculate_retry_delay_no_overflow() {
+        // Test avec des valeurs qui pourraient causer un overflow
+        let client = ApiClient::new(
+            "test_key".to_string(),
+            None,
+            false,
+            false,
+            3,
+            u64::MAX,
+            u64::MAX,
+        );
+        // Tentative 0: u64::MAX * 1 = u64::MAX
+        assert_eq!(client.calculate_retry_delay(0), u64::MAX);
+        // Tentative 1: overflow potentiel dans 2u64.pow(attempt), mais multiplication avec u64::MAX peut dépasser.
+        // Cependant, std::cmp::min avec u64::MAX limitera.
+        // On vérifie que la fonction ne panique pas.
+        let _ = client.calculate_retry_delay(1);
+    }
+
+    // Note: les tests pour la méthode call nécessitent des mocks HTTP.
+    // On peut les ajouter plus tard avec un crate comme mockito.
 }

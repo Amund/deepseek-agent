@@ -162,3 +162,157 @@ impl HistoryManager {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::*;
+
+    #[test]
+    fn test_history_manager_new() {
+        let hm = HistoryManager::new(Some(10), Some(1000), false);
+        assert_eq!(hm.messages.len(), 0);
+        assert_eq!(hm.total_tokens, 0);
+        assert_eq!(hm.token_calibration_factor, 1.0);
+        assert_eq!(hm.max_history_messages, Some(10));
+        assert_eq!(hm.max_context_tokens, Some(1000));
+    }
+
+    #[test]
+    fn test_add_message() {
+        let mut hm = HistoryManager::new(None, None, false);
+        let message = Message {
+            role: "user".to_string(),
+            content: "Hello".to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+            token_count: None,
+        };
+        hm.add_message(message);
+        assert_eq!(hm.messages.len(), 1);
+        assert!(hm.total_tokens > 0);
+        // Le message devrait avoir un token_count estimé
+        assert!(hm.messages[0].token_count.is_some());
+    }
+
+    #[test]
+    fn test_add_multiple_messages() {
+        let mut hm = HistoryManager::new(None, None, false);
+        for i in 0..3 {
+            let message = Message {
+                role: "user".to_string(),
+                content: format!("Message {}", i),
+                tool_calls: None,
+                tool_call_id: None,
+                token_count: None,
+            };
+            hm.add_message(message);
+        }
+        assert_eq!(hm.messages.len(), 3);
+        // Le total tokens devrait être la somme
+        let total: u32 = hm.messages.iter().map(|m| m.token_count.unwrap_or(0)).sum();
+        assert_eq!(hm.total_tokens, total);
+    }
+
+    #[test]
+    fn test_estimate_and_set_tokens() {
+        let mut hm = HistoryManager::new(None, None, false);
+        let mut message = Message {
+            role: "user".to_string(),
+            content: "Hello world".to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+            token_count: None,
+        };
+        let tokens = hm.estimate_and_set_tokens(&mut message);
+        assert!(tokens > 0);
+        assert_eq!(message.token_count, Some(tokens));
+        // Si on rappelle avec le même message (déjà un token_count), retourne la même valeur
+        let tokens2 = hm.estimate_and_set_tokens(&mut message);
+        assert_eq!(tokens2, tokens);
+    }
+
+    #[test]
+    fn test_calibrate_with_response() {
+        let mut hm = HistoryManager::new(None, None, false);
+        // Ajouter un message pour avoir un historique
+        let message = Message {
+            role: "user".to_string(),
+            content: "Hello".to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+            token_count: None,
+        };
+        hm.add_message(message);
+        
+        // Créer une réponse fictive avec usage
+        let response = ChatResponse {
+            choices: vec![Choice {
+                message: Message {
+                    role: "assistant".to_string(),
+                    content: "Hi there".to_string(),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    token_count: None,
+                },
+            }],
+            usage: Usage {
+                prompt_tokens: 100,
+                completion_tokens: 20,
+                total_tokens: 120,
+                prompt_cache_hit_tokens: Some(50),
+                prompt_cache_miss_tokens: Some(50),
+            },
+        };
+        
+        // Créer une requête fictive avec outils
+        let request = ChatRequest {
+            model: "deepseek-chat".to_string(),
+            messages: hm.messages.clone(),
+            tools: vec![Tool {
+                tool_type: "function".to_string(),
+                function: ToolFunction {
+                    name: "sh".to_string(),
+                    description: "Execute shell command".to_string(),
+                    parameters: serde_json::json!({}),
+                },
+            }],
+            tool_choice: "auto".to_string(),
+            stream: false,
+        };
+        
+        // Calibrer
+        hm.calibrate_with_response(&request, &response);
+        
+        // Vérifier que les statistiques ont été mises à jour
+        assert_eq!(hm.total_real_tokens_observed, 100);
+        assert!(hm.total_estimated_tokens > 0);
+        // Le facteur de calibration peut avoir changé s'il y avait une erreur significative
+        assert!(hm.token_calibration_factor >= 0.5 && hm.token_calibration_factor <= 2.0);
+    }
+
+    #[test]
+    fn test_should_restart_session() {
+        // Cas sans limite de tokens
+        let hm = HistoryManager::new(None, None, false);
+        assert!(!hm.should_restart_session());
+        
+        // Cas avec limite mais assez de tokens restants
+        let mut hm = HistoryManager::new(None, Some(10000), false);
+        // Simuler un total_tokens de 1000
+        hm.total_tokens = 1000;
+        assert!(!hm.should_restart_session()); // 9000 restants > 4000
+        
+        // Cas avec peu de tokens restants
+        hm.total_tokens = 7000;
+        assert!(hm.should_restart_session()); // 3000 restants <= 4000
+        
+        // Cas exactement au seuil
+        hm.total_tokens = 6000;
+        assert!(hm.should_restart_session()); // 4000 restants <= 4000
+        
+        // Cas dépassé
+        hm.total_tokens = 11000;
+        assert!(hm.should_restart_session()); // -1000 restants <= 4000
+    }
+}

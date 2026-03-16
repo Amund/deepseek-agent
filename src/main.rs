@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn test_parse_streaming_chunk() {
-        use crate::api::{ChatChunk, ChunkChoice, ChunkDelta};
+        use crate::api::ChatChunk;
         use serde_json;
 
         let json = r#"{
@@ -152,7 +152,7 @@ mod tests {
 
     #[test]
     fn test_parse_streaming_chunk_with_tool_calls() {
-        use crate::api::{ChatChunk, ChunkChoice, ChunkDelta, FunctionCallDelta, ToolCallDelta};
+        use crate::api::ChatChunk;
         use serde_json;
 
         // Exemple hypothétique d'un chunk avec tool_call delta

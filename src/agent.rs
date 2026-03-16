@@ -265,4 +265,125 @@ impl Agent {
         self.history.calibrate_with_response(&request, &response);
         Ok(response)
     }
+
+    }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::*;
+
+    #[test]
+    fn test_make_tools() {
+        let tools = Agent::make_tools();
+        assert_eq!(tools.len(), 1);
+        let tool = &tools[0];
+        assert_eq!(tool.tool_type, "function");
+        assert_eq!(tool.function.name, "sh");
+        assert_eq!(tool.function.description, "Exécute une commande shell bash");
+        // Vérifier que les paramètres sont corrects
+        let params = &tool.function.parameters;
+        assert_eq!(params["type"], "object");
+        assert_eq!(params["properties"]["command"]["type"], "string");
+        assert_eq!(params["required"][0], "command");
+    }
+
+    #[test]
+    fn test_agent_new() {
+        let agent = Agent::new(
+            "test_key".to_string(),
+            Some("deepseek-chat".to_string()),
+            Some("Test system prompt".to_string()),
+            Some(vec!["ls".to_string()]),
+            Some(vec!["rm".to_string()]),
+            Some(10),
+            Some(10000),
+            false,
+            Some(3),
+            Some(100),
+            Some(1000),
+            Some(5000),
+            Some(false),
+        );
+        assert_eq!(agent.model, "deepseek-chat");
+        assert_eq!(agent.system_prompt, Some("Test system prompt".to_string()));
+        assert!(!agent.debug);
+        assert!(!agent.stream);
+    }
+
+    #[test]
+    fn test_agent_new_defaults() {
+        let agent = Agent::new(
+            "test_key".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(agent.model, "deepseek-chat");
+        assert!(agent.system_prompt.is_none());
+        assert!(!agent.stream);
+    }
+
+    #[test]
+    fn test_print_assistant_message() {
+        // Note: cette fonction imprime sur stdout, difficile à tester unitairement.
+        // On peut vérifier qu'elle ne panique pas.
+        let agent = Agent::new(
+            "test_key".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let msg = Message {
+            role: "assistant".to_string(),
+            content: "Hello".to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+            token_count: None,
+        };
+        // Appel de la fonction (ne devrait pas paniquer)
+        agent.print_assistant_message(&msg);
+    }
+
+    #[test]
+    fn test_check_restart() {
+        // Cette fonction délègue à session::check_and_restart_if_needed
+        // On peut tester avec un agent qui a un historique vide
+        let agent = Agent::new(
+            "test_key".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        // Avec un historique vide, should_restart_session retourne false
+        // car max_context_tokens est None
+        let result = agent.check_restart();
+        assert!(result.is_ok());
+    }
 }

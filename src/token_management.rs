@@ -76,3 +76,90 @@ pub fn default_max_context_tokens_for_model(model: &Option<String>) -> u32 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::*;
+
+    #[test]
+    fn test_estimate_tokens() {
+        // Texte vide
+        assert_eq!(estimate_tokens(""), 0);
+        // Texte court (moins de 3 caractères)
+        assert_eq!(estimate_tokens("hi"), 1);
+        assert_eq!(estimate_tokens("a"), 1);
+        // Texte de 6 caractères = 2 tokens
+        assert_eq!(estimate_tokens("hello!"), 2);
+        // Texte de 10 caractères = 3 tokens (10/3 ≈ 3.33 -> arrondi à 3 via division entière)
+        assert_eq!(estimate_tokens("hello world"), 3); // 11 caractères en fait
+        // Texte avec espaces
+        assert_eq!(estimate_tokens("hello world!"), 4); // 12 caractères / 3 = 4
+    }
+
+    #[test]
+    fn test_estimate_message_tokens() {
+        let message = Message {
+            role: "user".to_string(),
+            content: "Hello world".to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+            token_count: None,
+        };
+        // "user" (4 chars) -> 1 token, "Hello world" (11 chars) -> 3 tokens, total ~4
+        let tokens = estimate_message_tokens(&message);
+        assert!(tokens >= 4 && tokens <= 5);
+    }
+
+    #[test]
+    fn test_estimate_message_tokens_with_tool_calls() {
+        let message = Message {
+            role: "assistant".to_string(),
+            content: String::new(),
+            tool_calls: Some(vec![ToolCall {
+                id: "call_123".to_string(),
+                call_type: "function".to_string(),
+                function: FunctionCall {
+                    name: "sh".to_string(),
+                    arguments: "{\"command\": \"ls\"}".to_string(),
+                },
+            }]),
+            tool_call_id: None,
+            token_count: None,
+        };
+        let tokens = estimate_message_tokens(&message);
+        // "assistant" (9 chars) -> 3 tokens, id (8 chars) -> 2 tokens, call_type (8 chars) -> 2 tokens,
+        // name "sh" (2 chars) -> 1 token, arguments ~20 chars -> 6 tokens, total ~14
+        assert!(tokens > 0);
+    }
+
+    #[test]
+    fn test_default_max_context_tokens_for_model() {
+        // Modèle non spécifié (défaut deepseek-chat)
+        assert_eq!(default_max_context_tokens_for_model(&None), 112_000);
+        // deepseek-chat
+        assert_eq!(
+            default_max_context_tokens_for_model(&Some("deepseek-chat".to_string())),
+            112_000
+        );
+        // deepseek-reasoner
+        assert_eq!(
+            default_max_context_tokens_for_model(&Some("deepseek-reasoner".to_string())),
+            104_000
+        );
+        // Modèle inconnu
+        assert_eq!(
+            default_max_context_tokens_for_model(&Some("deepseek-coder".to_string())),
+            28_000
+        );
+        assert_eq!(
+            default_max_context_tokens_for_model(&Some("gpt-4".to_string())),
+            28_000
+        );
+        // Modèle vide string
+        assert_eq!(
+            default_max_context_tokens_for_model(&Some("".to_string())),
+            28_000
+        );
+    }
+}

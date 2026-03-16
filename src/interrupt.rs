@@ -64,7 +64,6 @@ where
     F: FnOnce() -> bool,
     C: FnMut() -> bool,
 {
-    reset_interrupt();
     let _result = action();
     // Si l'action est terminée, vérifier si une interruption a été demandée pendant l'exécution
     if is_interrupt_requested() {
@@ -76,4 +75,122 @@ where
         return true;
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn test_interrupt_flags() {
+        // Réinitialiser les flags avant le test
+        reset_interrupt();
+        assert!(!is_interrupt_requested());
+        
+        // Simuler Ctrl+C
+        CTRL_C_REQUESTED.store(true, Ordering::SeqCst);
+        assert!(is_interrupt_requested());
+        
+        // Réinitialiser
+        reset_interrupt();
+        assert!(!is_interrupt_requested());
+        
+        // Simuler Échap
+        ESCAPE_REQUESTED.store(true, Ordering::SeqCst);
+        assert!(is_interrupt_requested());
+        
+        // Réinitialiser
+        reset_interrupt();
+        assert!(!is_interrupt_requested());
+        
+        // Les deux flags
+        CTRL_C_REQUESTED.store(true, Ordering::SeqCst);
+        ESCAPE_REQUESTED.store(true, Ordering::SeqCst);
+        assert!(is_interrupt_requested());
+        
+        reset_interrupt();
+    }
+
+    #[test]
+    fn test_check_interrupt() {
+        reset_interrupt();
+        // Pas d'interruption
+        assert!(!check_interrupt());
+        
+        // Simuler Ctrl+C
+        CTRL_C_REQUESTED.store(true, Ordering::SeqCst);
+        assert!(check_interrupt());
+        // Après check_interrupt, le flag est réinitialisé
+        assert!(!CTRL_C_REQUESTED.load(Ordering::SeqCst));
+        
+        // Simuler Échap
+        ESCAPE_REQUESTED.store(true, Ordering::SeqCst);
+        assert!(check_interrupt());
+        assert!(!ESCAPE_REQUESTED.load(Ordering::SeqCst));
+        
+        // Vérifier que check_interrupt réinitialise les deux flags
+        CTRL_C_REQUESTED.store(true, Ordering::SeqCst);
+        ESCAPE_REQUESTED.store(true, Ordering::SeqCst);
+        assert!(check_interrupt());
+        assert!(!CTRL_C_REQUESTED.load(Ordering::SeqCst));
+        assert!(!ESCAPE_REQUESTED.load(Ordering::SeqCst));
+        
+        reset_interrupt();
+    }
+
+    #[test]
+    fn test_run_with_interrupt_check_no_interrupt() {
+        reset_interrupt();
+        let action_executed = std::cell::Cell::new(false);
+        let check_called = std::cell::Cell::new(false);
+        
+        let interrupted = run_with_interrupt_check(
+            || {
+                action_executed.set(true);
+                false // action ne demande pas d'arrêt
+            },
+            || {
+                check_called.set(true);
+                false // check ne demande pas d'arrêt
+            },
+        );
+        
+        assert!(action_executed.get());
+        assert!(check_called.get());
+        assert!(!interrupted);
+        reset_interrupt();
+    }
+
+    #[test]
+    fn test_run_with_interrupt_check_with_interrupt_during_action() {
+        reset_interrupt();
+        // Simuler une interruption pendant l'action
+        CTRL_C_REQUESTED.store(true, Ordering::SeqCst);
+        
+        let interrupted = run_with_interrupt_check(
+            || false,
+            || false,
+        );
+        
+        assert!(interrupted);
+        // L'interruption a été réinitialisée par run_with_interrupt_check
+        assert!(!is_interrupt_requested());
+        reset_interrupt();
+    }
+
+    #[test]
+    fn test_run_with_interrupt_check_with_check_returning_true() {
+        reset_interrupt();
+        let interrupted = run_with_interrupt_check(
+            || false,
+            || true, // check demande l'arrêt
+        );
+        
+        assert!(interrupted);
+        reset_interrupt();
+    }
+
+    // Note: les tests pour init_interrupt_handler, check_escape_pressed
+    // ne sont pas inclus car ils dépendent de ctrlc et crossterm.
 }

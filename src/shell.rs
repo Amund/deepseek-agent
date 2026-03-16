@@ -42,3 +42,50 @@ impl ShellExecutor {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::runtime::Runtime;
+
+    #[test]
+    fn test_shell_executor_no_timeout() {
+        let rt = Runtime::new().unwrap();
+        let executor = ShellExecutor::new(None);
+        let output = rt.block_on(executor.exec("echo hello"));
+        assert!(output.contains("hello"));
+    }
+
+    #[test]
+    fn test_shell_executor_with_timeout() {
+        let rt = Runtime::new().unwrap();
+        let executor = ShellExecutor::new(Some(5000)); // 5 secondes
+        let output = rt.block_on(executor.exec("echo test"));
+        assert!(output.contains("test"));
+    }
+
+    #[test]
+    fn test_shell_executor_timeout_expired() {
+        let rt = Runtime::new().unwrap();
+        let executor = ShellExecutor::new(Some(100)); // 100ms
+        let output = rt.block_on(executor.exec("sleep 1")); // dort 1 seconde
+        assert!(output.contains("Timeout"));
+    }
+
+    #[test]
+    fn test_shell_executor_error() {
+        let rt = Runtime::new().unwrap();
+        let executor = ShellExecutor::new(None);
+        let output = rt.block_on(executor.exec("non_existent_command"));
+        assert!(output.contains("Erreur d'exécution") || output.contains("STDERR"));
+    }
+
+    #[test]
+    fn test_shell_executor_stderr() {
+        let rt = Runtime::new().unwrap();
+        let executor = ShellExecutor::new(None);
+        let output = rt.block_on(executor.exec("ls /nonexistent"));
+        // Cette commande génère une erreur (fichier inexistant)
+        assert!(output.contains("STDERR") || output.contains("No such file"));
+    }
+}

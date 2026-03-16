@@ -72,3 +72,76 @@ impl Security {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_security_no_lists() {
+        let security = Security::new(None, None);
+        assert!(security.validate_command("ls -la").is_ok());
+        assert!(security.validate_command("echo hello").is_ok());
+        // Les commandes dangereuses sont toujours détectées par les patterns
+        assert!(security.validate_command("ls; rm -rf /").is_err());
+    }
+
+    #[test]
+    fn test_security_whitelist() {
+        let whitelist = Some(vec!["ls".to_string(), "echo".to_string()]);
+        let security = Security::new(whitelist, None);
+        assert!(security.validate_command("ls -la").is_ok());
+        assert!(security.validate_command("echo hello").is_ok());
+        assert!(security.validate_command("cat file.txt").is_err());
+        assert!(security.validate_command("rm file.txt").is_err());
+    }
+
+    #[test]
+    fn test_security_blacklist() {
+        let blacklist = Some(vec!["rm".to_string(), "dd".to_string()]);
+        let security = Security::new(None, blacklist);
+        assert!(security.validate_command("ls -la").is_ok());
+        assert!(security.validate_command("echo hello").is_ok());
+        assert!(security.validate_command("rm file.txt").is_err());
+        assert!(security.validate_command("dd if=/dev/zero").is_err());
+        // Vérification sur tous les tokens (même si rm est le second token)
+        assert!(security.validate_command("ls; rm file.txt").is_err());
+        // Les options commençant par - ne sont pas bloquées
+        assert!(security.validate_command("ls -rm").is_ok());
+    }
+
+    #[test]
+    fn test_security_blacklist_priority() {
+        // Blacklist prioritaire sur whitelist
+        let whitelist = Some(vec!["rm".to_string()]);
+        let blacklist = Some(vec!["rm".to_string()]);
+        let security = Security::new(whitelist, blacklist);
+        assert!(security.validate_command("rm file.txt").is_err());
+    }
+
+    #[test]
+    fn test_security_dangerous_patterns() {
+        let security = Security::new(None, None);
+        // Patterns dangereux
+        assert!(security.validate_command("ls; rm -rf /").is_err());
+        assert!(security.validate_command("ls; sudo apt update").is_err());
+        assert!(security.validate_command("ls > /dev/null").is_err());
+        assert!(security.validate_command("echo test | bash").is_err());
+        assert!(security.validate_command("echo test | sh").is_err());
+        assert!(security.validate_command("ls && rm -rf /").is_err());
+        assert!(security.validate_command("ls || echo fail").is_err());
+        // Commandes normales
+        assert!(security.validate_command("ls -la").is_ok());
+        assert!(security.validate_command("echo hello world").is_ok());
+        // Patterns avec variations de casse
+        assert!(security.validate_command("ls; SUDO apt update").is_err());
+    }
+
+    #[test]
+    fn test_security_empty_command() {
+        let security = Security::new(None, None);
+        assert!(security.validate_command("").is_ok());
+        let security = Security::new(Some(vec!["ls".to_string()]), None);
+        assert!(security.validate_command("").is_err()); // cmd_name vide n'est pas dans la whitelist
+    }
+}
