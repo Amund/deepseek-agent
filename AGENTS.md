@@ -11,7 +11,7 @@ Documentation pour les agents IA reprenant le projet. Ce fichier contient le con
 
 ## 🏗️ Architecture Modulaire
 
-Le code a été refactorisé en modules spécialisés pour améliorer la maintenabilité et permettre des tests unitaires ciblés :
+Le code a été refactorisé en modules spécialisés pour améliorer la maintenabilité et permettre des tests unitaires ciblés. Le projet a été structuré en une librairie (`src/lib.rs`) et un binaire (`src/main.rs`) pour permettre des tests d'intégration et une meilleure organisation :
 
 ### Modules principaux
 
@@ -49,7 +49,7 @@ deepseek-agent/
 ├── .gitignore             # Fichiers ignorés
 ├── Makefile               # Commandes Docker
 ├── docker-compose.yml     # Configuration Docker
-├── tests/                 # Tests d'intégration (vide pour l'instant)
+├── tests/                 # Tests d'intégration (integration.rs)
 └── examples/              # Exemples d'utilisation
     ├── basic_usage.md     # Exemples détaillés
     └── continue_example.md # Exemple de fichier CONTINUE.md
@@ -109,14 +109,15 @@ deepseek-agent/
 - [x] Ajout de logs de débogage pour les réponses API
 - [x] Tests unitaires pour les nouveaux modules
 - [x] Suppression de la validation de sécurité (listes blanche/noire, patterns dangereux)
+- [x] Tests d'intégration : Ajouter des tests d'intégration dans le dossier `tests/`
 
 ### 🔄 Dernière Mise à Jour
 
-**Date** : 2026-03-22  
+**Date** : 2026-03-23  
 **Agent** : Assistant IA  
-**Contexte** : Suppression de la validation de sécurité des commandes shell (listes blanche/noire, patterns dangereux). Cette validation était inutilement lourde et le programme est destiné à être utilisé dans un conteneur Docker, où la sécurité est assurée par le conteneur. Toutes les références à la sécurité ont été retirées du code et de la documentation.
+**Contexte** : Ajout de tests d'intégration avec mockito pour simuler l'API et tester le flux complet. Refactorisation du projet en librairie + binaire pour permettre les tests d'intégration.
 
-**État du projet** : ✅ **Fonctionnel et simplifié** - Les fonctionnalités de base sont opérationnelles sans validation superflue. Le code est plus simple et maintenable. Tous les tests passent avec succès.
+**État du projet** : ✅ **Fonctionnel et bien testé** - Les fonctionnalités de base sont opérationnelles avec des tests unitaires et d'intégration. Le code est structuré en librairie et binaire pour une meilleure maintenabilité.
 
 ### 🛠️ Décisions Techniques Prises
 
@@ -144,7 +145,7 @@ deepseek-agent/
 
 ### 📈 Prochaines Étapes
 
-1. **Tests d'intégration** : Ajouter des tests d'intégration dans le dossier `tests/`
+1. **Tests d'intégration** : ✅ Complété
 2. **Interface utilisateur améliorée** : Historique de commandes, coloration syntaxique
 3. **Optimisations de performance** : Réduction de la consommation mémoire, parallélisation
 4. **Fonctionnalités avancées** : Support de plusieurs outils, mode batch
