@@ -162,6 +162,15 @@ impl MessageFormatter {
         }
     }
 
+    /// Formate une URL fetch
+    pub fn fetch_url_message(&self, url: &str) -> String {
+        if self.colors_enabled {
+            format!("{} {}", self.theme.info.clone(), url.cyan())
+        } else {
+            format!("[Info] Fetching: {}", url)
+        }
+    }
+
     /// Formate une sortie shell
     pub fn shell_output(&self, output: &str) -> String {
         if self.colors_enabled {
@@ -217,18 +226,17 @@ impl MessageFormatter {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_colors_enabled_without_env() {
         // Ce test dépend de l'environnement, difficile à tester unitairement.
         // On vérifie juste que la fonction ne panique pas
         let _ = colors_enabled();
     }
-    
+
     #[test]
     fn test_message_formatter_new() {
         let formatter = MessageFormatter::new();
@@ -236,5 +244,12 @@ mod tests {
         let _ = formatter.user_prompt();
         let _ = formatter.assistant_prefix();
         let _ = formatter.shell_command();
+    }
+
+    #[test]
+    fn test_fetch_url_message() {
+        let formatter = MessageFormatter::new();
+        let result = formatter.fetch_url_message("https://example.com");
+        assert!(result.contains("Fetching") || result.contains("example.com"));
     }
 }

@@ -6,7 +6,7 @@ Documentation pour les agents IA reprenant le projet. Ce fichier contient le con
 
 **Nom** : deepseek-agent  
 **Langage** : Rust  
-**Objectif** : Un agent CLI minimal utilisant l'API DeepSeek avec un seul outil - l'exécution de commandes shell (`sh`).  
+**Objectif** : Un agent CLI minimal utilisant l'API DeepSeek avec deux outils - l'exécution de commandes shell (`sh`) et la récupération de contenu web (`fetch`).  
 **Philosophie** : Léger, sans persistance (tout en mémoire), destiné à tourner dans un conteneur Docker, donc sans sandboxing supplémentaire pour les commandes exécutées.
 
 ## 🏗️ Architecture Modulaire
@@ -19,6 +19,7 @@ Le code a été refactorisé en modules spécialisés pour améliorer la mainten
 - **api.rs** : Définitions des structures de données pour l'API (messages, requêtes, réponses)
 - **api_client.rs** : Appels HTTP avec retry et gestion du streaming
 - **config.rs** : Chargement de la configuration depuis les variables d'environnement
+- **fetch.rs** : Récupération de contenu web et conversion en markdown
 - **history.rs** : Gestion de l'historique des messages, estimation des tokens, calibration
 - **interrupt.rs** : Gestion des interruptions (Ctrl+C, touche Échap)
 - **session.rs** : Redémarrage de session et création du fichier CONTINUE.md
@@ -37,6 +38,7 @@ deepseek-agent/
 │   ├── api.rs             # Structures API
 │   ├── api_client.rs      # Client HTTP avec retries
 │   ├── config.rs          # Configuration
+│   ├── fetch.rs           # Récupération web et conversion markdown
 │   ├── history.rs         # Gestion historique
 │   ├── interrupt.rs       # Gestion interruptions
 │   ├── session.rs         # Redémarrage session
@@ -62,24 +64,25 @@ deepseek-agent/
 ### ✅ Fonctionnalités implémentées
 
 1. **Appels API DeepSeek** : Support complet des modèles deepseek-chat et deepseek-reasoner
-2. **Exécution de commandes shell** via l'outil `sh` (bash)
-3. **Streaming des réponses** : Affichage en temps réel des réponses de l'API
-4. **Gestion d'historique intelligente** :
+2. **Exécution de commandes shell** via l'outil `sh` (bash) avec timeout configurable
+3. **Récupération de contenu web** via l'outil `fetch` qui retourne le contenu en format markdown
+4. **Streaming des réponses** : Affichage en temps réel des réponses de l'API
+5. **Gestion d'historique intelligente** :
    - Estimation et calibration des tokens
    - Optimisation du cache KV DeepSeek
    - Limites configurables (messages et tokens)
-5. **Redémarrage automatique de session** : Création d'un fichier CONTINUE.md lorsque moins de 4000 tokens restent
-6. **Chargement automatique du contexte** : AGENTS.md, README.md et CONTINUE.md chargés automatiquement au démarrage
-7. **Gestion des interruptions** :
+6. **Redémarrage automatique de session** : Création d'un fichier CONTINUE.md lorsque moins de 4000 tokens restent
+7. **Chargement automatique du contexte** : AGENTS.md, README.md et CONTINUE.md chargés automatiquement au démarrage
+8. **Gestion des interruptions** :
    - Ctrl+C pour arrêter un traitement et quitter l'application
    - Touche Échap pour interrompre le streaming d'une réponse
 
-8. **Gestion robuste des erreurs** :
+9. **Gestion robuste des erreurs** :
    - Retry automatique avec backoff exponentiel
    - Timeout configurable pour les commandes shell
    - Logs de débogage détaillés
-9. **Support des tool_calls en streaming** : Accumulation correcte des fragments d'arguments JSON
-10. **Interface utilisateur améliorée** : Coloration syntaxique, gestion des couleurs via variables d'environnement
+10. **Support des tool_calls en streaming** : Accumulation correcte des fragments d'arguments JSON
+11. **Interface utilisateur améliorée** : Coloration syntaxique, gestion des couleurs via variables d'environnement
 
 ### 🔧 Configuration avancée
 
@@ -114,16 +117,13 @@ deepseek-agent/
 - [x] Suppression de la validation de sécurité (listes blanche/noire, patterns dangereux)
 - [x] Tests d'intégration : Ajouter des tests d'intégration dans le dossier `tests/`
 - [x] Interface utilisateur améliorée : Coloration syntaxique (historique persistant retiré pour respecter le contrat de légèreté)
+- [ ] 
 
 ### 🔄 Dernière Mise à Jour
 
-**Date** : 2026-03-23  
+**Date** : 2026-03-19  
 **Agent** : Assistant IA  
-**Contexte** : Suppression de l'historique persistant des commandes pour respecter le contrat de départ (programme léger et sans persistance). Conservation de la coloration syntaxique via le module `ui.rs` avec gestion des couleurs (variables DEEPSEEK_AGENT_NO_COLOR et DEEPSEEK_AGENT_COLOR). Amélioration de l'affichage des messages (agent, shell, erreurs) avec des couleurs.
-
-**Suppression de `max_history_messages`** : Cette variable d'environnement était un reliquat d'une ancienne fonctionnalité. La gestion du contexte repose désormais entièrement sur le calcul des tokens (`max_context_tokens`). La variable a été retirée du code, de la configuration et de la documentation.
-
-**Correction des lignes vides entre les tool_calls** : Lorsque l'agent appelle plusieurs outils en séquence sans message visible entre eux, une ligne vide parasite était affichée dans le terminal. Cette ligne vide provenait du saut de ligne ajouté systématiquement après le streaming, même quand aucun contenu n'était affiché. Correction : le saut de ligne n'est ajouté que si du contenu a effectivement été affiché pendant le streaming.
+**Contexte** : Ajout de l'outil `fetch` pour la récupération de contenu web et conversion en markdown. Nouveau module `fetch.rs` avec 10 tests unitaires et 6 tests d'intégration. Mise à jour de la configuration avec `DEEPSEEK_AGENT_FETCH_TIMEOUT_MS`.
 
 **État du projet** : ✅ **Fonctionnel et bien testé** - Les fonctionnalités de base sont opérationnelles avec des tests unitaires et d'intégration. Le code est structuré en librairie et binaire pour une meilleure maintenabilité. L'interface utilisateur offre une expérience améliorée avec couleurs, sans persistance pour rester léger.
 

@@ -1,12 +1,13 @@
 # deepseek-agent
 
 Un agent CLI minimal écrit en Rust, utilisant l'API native de DeepSeek.  
-Conçu pour être **léger, modulaire et extensible**. L'agent dispose d'un seul outil : l'exécution de commandes shell (`sh`), ce qui en fait un assistant puissant pour l'automatisation de tâches système dans un environnement contrôlé.
+Conçu pour être **léger, modulaire et extensible**. L'agent dispose de deux outils : l'exécution de commandes shell (`sh`) et la récupération de contenu web (`fetch`), ce qui en fait un assistant puissant pour l'automatisation de tâches système et la consultation de ressources en ligne.
 
 ## ✨ Fonctionnalités
 
 - **Appels API DeepSeek** : Support complet des modèles `deepseek-chat` et `deepseek-reasoner` avec streaming des réponses
 - **Exécution de commandes shell** via l'outil `sh` (bash) avec timeout configurable
+- **Récupération de contenu web** via l'outil `fetch` qui retourne le contenu en format markdown (supporte HTML, JSON, texte brut)
 - **Gestion intelligente du contexte** :
   - Estimation et calibration automatique des tokens
   - Optimisation du cache KV DeepSeek
@@ -30,6 +31,7 @@ Le projet est organisé en modules Rust spécialisés :
 - **api.rs** : Définitions des structures de données pour l'API
 - **api_client.rs** : Appels HTTP avec retry et gestion du streaming
 - **config.rs** : Chargement de la configuration depuis les variables d'environnement
+- **fetch.rs** : Récupération de contenu web et conversion en markdown
 - **history.rs** : Gestion de l'historique des messages, estimation des tokens, calibration
 - **interrupt.rs** : Gestion des interruptions (Ctrl+C, touche Échap)
 - **session.rs** : Redémarrage de session et création du fichier CONTINUE.md
@@ -98,6 +100,7 @@ Agent DeepSeek. Tapez 'quit' pour sortir.
 Vous pouvez alors :
 - Poser des questions en texte libre
 - Demander l'exécution de commandes shell (ex: "liste les fichiers du répertoire courant")
+- Récupérer le contenu d'une URL (ex: "fetch https://example.com" pour obtenir le contenu en markdown)
 - Taper `quit` pour quitter
 
 ### Exemples d'interaction
@@ -119,6 +122,7 @@ Toutes les options sont configurables via variables d'environnement :
 | `DEEPSEEK_AGENT_RETRY_DELAY_MS` | Délai initial entre les tentatives (ms) | `1000` |
 | `DEEPSEEK_AGENT_MAX_RETRY_DELAY_MS` | Délai maximum entre les tentatives (ms) | `30000` |
 | `DEEPSEEK_AGENT_SHELL_TIMEOUT_MS` | Timeout pour l'exécution des commandes shell (ms) | Aucun |
+| `DEEPSEEK_AGENT_FETCH_TIMEOUT_MS` | Timeout pour les requêtes HTTP (ms) | 30000 |
 | `DEEPSEEK_AGENT_STREAM` | Activer le streaming des réponses | Activé (true) |
 | `DEEPSEEK_AGENT_SKIP_CONTEXT_FILES` | Désactiver le chargement automatique des fichiers AGENTS.md et README.md | Désactivé (fichiers chargés par défaut) |
 
@@ -135,6 +139,7 @@ export DEEPSEEK_AGENT_MAX_RETRIES=3              # Nombre maximum de tentatives 
 export DEEPSEEK_AGENT_RETRY_DELAY_MS=1000        # Délai initial entre les tentatives (ms)
 export DEEPSEEK_AGENT_MAX_RETRY_DELAY_MS=30000   # Délai maximum entre les tentatives (ms)
 export DEEPSEEK_AGENT_SHELL_TIMEOUT_MS=5000      # Timeout pour l'exécution des commandes shell (ms)
+export DEEPSEEK_AGENT_FETCH_TIMEOUT_MS=30000     # Timeout pour les requêtes HTTP (ms)
 export DEEPSEEK_AGENT_SKIP_CONTEXT_FILES=1       # Désactiver le chargement automatique des fichiers de contexte
 ```
 

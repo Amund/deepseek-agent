@@ -9,13 +9,14 @@ use crate::history::HistoryManager;
 use crate::interrupt;
 use crate::session::{self, RestartSessionError};
 use crate::shell::ShellExecutor;
-use crate::ui::MessageFormatter;
+use crate::{FetchExecutor, ui::MessageFormatter};
 
 pub struct Agent {
     api_client: ApiClient,
     history: HistoryManager,
     system_prompt: Option<String>,
     shell_executor: ShellExecutor,
+    fetch_executor: FetchExecutor,
     model: String,
     debug: bool,
     stream: bool,
@@ -33,6 +34,7 @@ impl Agent {
         retry_delay_ms: Option<u64>,
         max_retry_delay_ms: Option<u64>,
         shell_timeout_ms: Option<u64>,
+        fetch_timeout_ms: Option<u64>,
         stream: Option<bool>,
         base_url: Option<String>,
     ) -> Self {
@@ -57,6 +59,7 @@ impl Agent {
             system_prompt,
 
             shell_executor: ShellExecutor::new(shell_timeout_ms),
+            fetch_executor: FetchExecutor::new(fetch_timeout_ms),
             model: model_str,
             debug,
             stream: stream_enabled,
@@ -155,6 +158,49 @@ impl Agent {
                         tool_call_id: Some(tool_call.id.clone()),
                         token_count: None,
                     });
+                } else if tool_call.function.name == "fetch" {
+                    // Vérifier que les arguments ne sont pas vides
+                    if tool_call.function.arguments.is_empty() {
+                        tool_results.push(Message {
+                            role: "tool".into(),
+                            content: "Erreur: arguments JSON vides pour l'outil 'fetch'".into(),
+                            tool_calls: None,
+                            tool_call_id: Some(tool_call.id.clone()),
+                            token_count: None,
+                        });
+                        continue;
+                    }
+                    // Extraire l'URL des arguments JSON
+                    let args: serde_json::Value = match serde_json::from_str(&tool_call.function.arguments) {
+                        Ok(args) => args,
+                        Err(e) => {
+                            let error_msg = format!("Erreur de parsing JSON: {}. Arguments: {}", e, tool_call.function.arguments);
+                            if self.debug {
+                                println!("{}", self.formatter.debug_message(&error_msg));
+                            }
+                            tool_results.push(Message {
+                                role: "tool".into(),
+                                content: error_msg,
+                                tool_calls: None,
+                                tool_call_id: Some(tool_call.id.clone()),
+                                token_count: None,
+                            });
+                            continue;
+                        }
+                    };
+                    let url = args["url"].as_str().unwrap_or("").to_string();
+
+                    println!("{}", self.formatter.fetch_url_message(&url));
+                    let output = self.fetch_executor.fetch(&url).await;
+
+                    // Ajouter le résultat à la liste
+                    tool_results.push(Message {
+                        role: "tool".into(),
+                        content: output,
+                        tool_calls: None,
+                        tool_call_id: Some(tool_call.id.clone()),
+                        token_count: None,
+                    });
                 }
             }
 
@@ -190,7 +236,7 @@ impl Agent {
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // Message système (personnalisable)
         let system_content = self.system_prompt.clone().unwrap_or_else(||
-            "Tu es un assistant qui peut exécuter des commandes shell. Pour cela, utilise l'outil 'sh' avec le paramètre 'command'.".to_string()
+            "Tu es un assistant qui peut exécuter des commandes shell et récupérer le contenu de pages web. Pour les commandes shell, utilise l'outil 'sh' avec le paramètre 'command'. Pour les URLs, utilise l'outil 'fetch' avec le paramètre 'url' qui retourne le contenu en markdown.".to_string()
         );
 
         self.history.add_message(Message {
@@ -265,23 +311,42 @@ impl Agent {
     }
 
     fn make_tools() -> Vec<Tool> {
-        vec![Tool {
-            tool_type: "function".into(),
-            function: ToolFunction {
-                name: "sh".into(),
-                description: "Exécute une commande shell bash".into(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "command": {
-                            "type": "string",
-                            "description": "Commande shell à exécuter"
-                        }
-                    },
-                    "required": ["command"]
-                }),
+        vec![
+            Tool {
+                tool_type: "function".into(),
+                function: ToolFunction {
+                    name: "sh".into(),
+                    description: "Exécute une commande shell bash".into(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "command": {
+                                "type": "string",
+                                "description": "Commande shell à exécuter"
+                            }
+                        },
+                        "required": ["command"]
+                    }),
+                },
             },
-        }]
+            Tool {
+                tool_type: "function".into(),
+                function: ToolFunction {
+                    name: "fetch".into(),
+                    description: "Récupère le contenu d'une URL et le retourne en format markdown".into(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "url": {
+                                "type": "string",
+                                "description": "URL à récupérer (http:// ou https://)"
+                            }
+                        },
+                        "required": ["url"]
+                    }),
+                },
+            },
+        ]
     }
 
     async fn call_api(&mut self) -> Result<ChatResponse, Box<dyn std::error::Error>> {
@@ -308,19 +373,20 @@ mod tests {
     #[test]
     fn test_make_tools() {
         let tools = Agent::make_tools();
-        assert_eq!(tools.len(), 1);
+        assert_eq!(tools.len(), 2);
+        
+        // Vérifier l'outil sh
         let tool = &tools[0];
         assert_eq!(tool.tool_type, "function");
         assert_eq!(tool.function.name, "sh");
         assert_eq!(tool.function.description, "Exécute une commande shell bash");
-        // Vérifier que les paramètres sont corrects
         let params = &tool.function.parameters;
         assert_eq!(params["type"], "object");
         assert_eq!(params["properties"]["command"]["type"], "string");
         assert_eq!(params["required"][0], "command");
     }
 
-    #[test]
+   #[test]
     fn test_agent_new() {
         let agent = Agent::new(
             "test_key".to_string(),
@@ -332,6 +398,7 @@ mod tests {
             Some(100),
             Some(1000),
             Some(5000),
+            Some(30000),
             Some(false),
             None,
         );
@@ -355,6 +422,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert_eq!(agent.model, "deepseek-chat");
         assert!(agent.system_prompt.is_none());
@@ -371,6 +439,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             None,
             None,
             None,
@@ -405,10 +474,30 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         // Avec un historique vide, should_restart_session retourne false
         // car max_context_tokens est None
         let result = agent.check_restart();
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_make_tools_with_fetch() {
+        let tools = Agent::make_tools();
+        assert_eq!(tools.len(), 2);
+        
+        // Vérifier l'outil sh
+        assert_eq!(tools[0].function.name, "sh");
+        assert_eq!(tools[0].function.description, "Exécute une commande shell bash");
+        
+        // Vérifier l'outil fetch
+        assert_eq!(tools[1].function.name, "fetch");
+        assert_eq!(tools[1].function.description, "Récupère le contenu d'une URL et le retourne en format markdown");
+        
+        let params = &tools[1].function.parameters;
+        assert_eq!(params["type"], "object");
+        assert_eq!(params["properties"]["url"]["type"], "string");
+        assert_eq!(params["required"][0], "url");
     }
 }

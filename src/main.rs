@@ -33,6 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             config.retry_delay_ms,
             config.max_retry_delay_ms,
             config.shell_timeout_ms,
+            config.fetch_timeout_ms,
             config.stream,
             None,
         );

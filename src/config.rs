@@ -7,8 +7,6 @@ pub const DEFAULT_MAX_RETRIES: u32 = 3;
 pub const DEFAULT_RETRY_DELAY_MS: u64 = 1000;
 pub const DEFAULT_MAX_RETRY_DELAY_MS: u64 = 30000;
 
-
-
 // Fonction helper pour lire un fichier s'il existe, avec une limite de taille optionnelle
 pub fn load_file_if_exists(filepath: &str, max_size: Option<usize>) -> Option<String> {
     let path = Path::new(filepath);
@@ -46,6 +44,7 @@ pub struct Config {
     pub retry_delay_ms: Option<u64>,
     pub max_retry_delay_ms: Option<u64>,
     pub shell_timeout_ms: Option<u64>,
+    pub fetch_timeout_ms: Option<u64>,
     pub stream: Option<bool>,
 }
 
@@ -146,8 +145,6 @@ impl Config {
             println!("[Debug] Chargement des fichiers de contexte désactivé (DEEPSEEK_AGENT_SKIP_CONTEXT_FILES)");
         }
 
-
-
         // Limite de contexte (tokens)
         let max_context_tokens = env::var("DEEPSEEK_AGENT_MAX_CONTEXT_TOKENS")
             .ok()
@@ -164,6 +161,9 @@ impl Config {
             .ok()
             .and_then(|s| s.parse::<u64>().ok());
         let shell_timeout_ms = env::var("DEEPSEEK_AGENT_SHELL_TIMEOUT_MS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok());
+        let fetch_timeout_ms = env::var("DEEPSEEK_AGENT_FETCH_TIMEOUT_MS")
             .ok()
             .and_then(|s| s.parse::<u64>().ok());
 
@@ -186,6 +186,7 @@ impl Config {
             retry_delay_ms,
             max_retry_delay_ms,
             shell_timeout_ms,
+            fetch_timeout_ms,
             stream: Some(stream),
         })
     }
