@@ -1,12 +1,11 @@
 services:
   app:
-    container_name: rust-ds
-    image: rust:slim
+    container_name: deepseek-agent
+    build: .
     restart: unless-stopped
-    environment:
-      - DEEPSEEK_API_KEY=$DEEPSEEK_API_KEY
+    env_file: .env
     volumes:
-      - .:/app
-      - .git:/app/.git:ro
+      - ./workspace:/app
+      - ./target/release/deepseek-agent:/usr/local/bin/deepseek
     working_dir: /app
-    command: ["sleep", "infinity"]
+    command: sleep infinity

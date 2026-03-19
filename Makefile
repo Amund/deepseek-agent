@@ -10,33 +10,17 @@
 
 
 ## GESTION DES CONTAINERS
-.PHONY: up down shell shell-root logs
+.PHONY: build release docker
 
-up: # Start up containers
-	@docker compose up -d --remove-orphans
-down: # Stop containers
-	@docker compose down -v
-shell:
-	@docker compose exec app /bin/bash
-shell-root:
-	@docker compose exec -u 0:0 app /bin/bash
-logs:
-	@docker compose logs -f
-
-
-## OUTILS COURANTS
-.PHONY: composer wp phpstan phpunit lightningcss
-
-composer:
-	@docker compose exec app composer $(filter-out $@,$(MAKECMDGOALS)) || true
-wp:
-	@docker compose exec app wp $(filter-out $@,$(MAKECMDGOALS)) || true
-phpstan:
-	@docker compose exec app phpstan $(filter-out $@,$(MAKECMDGOALS)) || true
-phpunit:
-	@docker compose exec app phpunit $(filter-out $@,$(MAKECMDGOALS)) || true
-lightningcss:
-	@docker compose exec app lightningcss $(filter-out $@,$(MAKECMDGOALS)) || true
+build:
+	@docker build -t deepseek-agent .
+agent:
+	@docker run --rm -it \
+		-v ./workspace:/app \
+		-w /app \
+		-u $(shell id -u):$(shell id -g) \
+		--env-file .env \
+		deepseek-agent
 
 %:
 	@:
